@@ -11,7 +11,7 @@ def pose_result_callback(
     image: mp.Image,
     timestamp_ms: int,
 ) -> None:
-    draw_pose_points(image, result, wait_ms=1)
+    draw_pose_points(image, result, wait_ms=0)
 
 
 def _pose_stream(path: str, detector: PoseLandmarker, webcam=True, live = True):
@@ -26,7 +26,6 @@ def _pose_stream(path: str, detector: PoseLandmarker, webcam=True, live = True):
     frame_index = 0
     while video_capture.isOpened():
         ret, frame = video_capture.read()
-        mp.Image(image_format=mp.ImageFormat.SRGB, data=frame)
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame)
         frame_timestamp_ms = int(1000 * frame_index / fps)
         if live:
@@ -38,17 +37,14 @@ def _pose_stream(path: str, detector: PoseLandmarker, webcam=True, live = True):
 
     video_capture.release()
 
-def pose_point(path:str, running_mode: python.vision.RunningMode):
+def pose_point(path:str, running_mode: python.vision.RunningMode, webcam=True):
     base_options = python.BaseOptions(model_asset_path='./data/pose_landmarker_heavy.task')
     options = vision.PoseLandmarkerOptions(
-        base_options=base_options, running_mode=running_mode,
+        base_options=base_options, running_mode=running_mode, result_callback=pose_result_callback,
         output_segmentation_masks=True)
     detector = vision.PoseLandmarker.create_from_options(options)
-    if running_mode == python.vision.RunningMode.VIDEO:
-        _pose_stream(path, detector, webcam=False, live=False)
-
-    elif running_mode == python.vision.RunningMode.LIVE_STREAM:
-        _pose_stream(path, detector)
+    if not  running_mode == python.vision.RunningMode.IMAGE:
+        _pose_stream(path, detector, webcam=webcam, live=running_mode == python.vision.RunningMode.LIVE_STREAM)
     else:
         detector = vision.PoseLandmarker.create_from_options(options)
         image = mp.Image.create_from_file(path)
@@ -59,4 +55,4 @@ def pose_point(path:str, running_mode: python.vision.RunningMode):
 
 
 if __name__ == '__main__':
-    pose_point('./data/images/video (10).avi', python.vision.RunningMode.VIDEO)
+    pose_point('./data/images/video (10).avi', python.vision.RunningMode.LIVE_STREAM)
