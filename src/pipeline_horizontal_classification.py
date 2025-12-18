@@ -7,7 +7,7 @@ def build_dataset_landmarks(directory: str, base_path:str):
     frame_list = []
     path = directory + base_path + '/' + base_path + '/'
     len_list = len(os.listdir(path + 'Annotation_files/'))
-    index = 0
+    index = 1
     for filename in os.listdir(path + 'Annotation_files/'):
        print(f'{index}/{len_list}')
        with open(f'{path}Annotation_files/{filename}', 'r') as f:
@@ -36,7 +36,7 @@ def build_all_dataset():
     frame_list.append(build_dataset_landmarks('./data/archive/', base_path='Home_01'))
     frame_list.append(build_dataset_landmarks('./data/archive/', base_path='Home_02'))
 
-    pd.DataFrame(frame_list).to_csv('./data/archive.csv', index=False)
+    pd.DataFrame(frame_list).to_json('./data/archive.json', index=False)
 
 if __name__ == '__main__':
     build_all_dataset()
