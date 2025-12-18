@@ -11,12 +11,19 @@ def build_dataset_landmarks(directory: str, base_path:str):
     for filename in os.listdir(path + 'Annotation_files/'):
        print(f'{index}/{len_list}')
        with open(f'{path}Annotation_files/{filename}', 'r') as f:
-           first_line = int(f.readline())
-           second_line = int(f.readline())
+           try:
+               first_line = int(f.readline())
+               second_line = int(f.readline())
+               data = pose_point(f'{path}Videos/{filename[:-3]}avi', python.vision.RunningMode.VIDEO, webcam=False)
+           except Exception as _:
+               print('Skipping video with multiple fall')
+               data = None
+
            frame_list.append({
+                'name': filename[:-4],
                 'start': first_line,
                 'end': second_line,
-                'data': pose_point(f'{path}Videos/{filename[:-3]}avi', python.vision.RunningMode.VIDEO, webcam=False)
+                'data': data
            })
        index = index + 1
     return frame_list
