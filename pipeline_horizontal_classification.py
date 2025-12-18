@@ -19,13 +19,17 @@ def build_dataset_landmarks(dir: str, base_path:str):
                 'data': pose_point(f'{path}Videos/{filename[:-3]}avi', python.vision.RunningMode.VIDEO, webcam=False)
            })
        index = index + 1
-    pd.DataFrame(frame_list).to_csv(f'{base_path}dataset_landmarks.csv', index=False)
+    return frame_list
 
 
 def build_all_dataset():
-    build_dataset_landmarks('./data/archive/', base_path='Coffee_room_01')
-    build_dataset_landmarks('./data/archive/', base_path='Coffee_room_02')
-    build_dataset_landmarks('./data/archive/', base_path='Home_01')
-    build_dataset_landmarks('./data/archive/', base_path='Home_02')
+    frame_list = list()
+    frame_list.append(build_dataset_landmarks('./data/archive/', base_path='Coffee_room_01'))
+    frame_list.append(build_dataset_landmarks('./data/archive/', base_path='Coffee_room_02'))
+    frame_list.append(build_dataset_landmarks('./data/archive/', base_path='Home_01'))
+    frame_list.append(build_dataset_landmarks('./data/archive/', base_path='Home_02'))
 
-build_all_dataset()
+    pd.DataFrame(frame_list).to_csv('./data/archive.csv', index=False)
+
+if __name__ == '__main__':
+    build_all_dataset()
