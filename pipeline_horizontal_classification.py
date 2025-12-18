@@ -3,9 +3,9 @@ import pandas as pd
 from pose_landmark import pose_point
 from mediapipe.tasks import python
 
-def build_dataset_landmarks(dir: str, base_path:str):
+def build_dataset_landmarks(directory: str, base_path:str):
     frame_list = []
-    path = dir + base_path + '/' + base_path + '/'
+    path = directory + base_path + '/' + base_path + '/'
     len_list = len(os.listdir(path + 'Annotation_files/'))
     index = 0
     for filename in os.listdir(path + 'Annotation_files/'):
