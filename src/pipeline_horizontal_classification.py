@@ -1,15 +1,21 @@
 import json
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
+from collections import deque
+import inspect
 
-import joblib
 import numpy as np
 import pandas as pd
+import joblib
+
 from sklearn.ensemble import HistGradientBoostingClassifier
-from sklearn.metrics import classification_report, confusion_matrix
+from sklearn.neural_network import MLPClassifier
+from sklearn.impute import SimpleImputer
 from sklearn.model_selection import GroupKFold, GroupShuffleSplit, RandomizedSearchCV
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import classification_report, confusion_matrix, f1_score
+
 
 NORMAL = 0
 FALL = 1
@@ -133,15 +139,157 @@ def _norm(v: np.ndarray) -> float:
     return float(np.linalg.norm(v) + 1e-6)
 
 
-def _quality_keypoints(pose33: Pose33, idxs: List[int]) -> Tuple[float, int]:
-    v = np.array([float(pose33[i].get("visibility", 0.0)) for i in idxs], dtype=np.float32)
-    p = np.array([float(pose33[i].get("presence", 0.0)) for i in idxs], dtype=np.float32)
-    q = float(np.mean(v * p))
-    good = int(np.sum((v >= 0.5) & (p >= 0.5)))
-    return q, good
+def _supports_sample_weight(pipeline: Pipeline) -> bool:
+    clf = pipeline.named_steps.get("clf", None)
+    if clf is None:
+        return False
+    try:
+        return "sample_weight" in inspect.signature(clf.fit).parameters
+    except Exception:
+        return False
 
 
-def extract_frame_features(
+def _binary_class_weight(y: np.ndarray) -> np.ndarray:
+    counts = np.bincount(y, minlength=2).astype(np.float32)
+    counts[counts == 0] = 1.0
+    w = (len(y) / (2.0 * counts)).astype(np.float32)
+    return w[y]
+
+
+def _downsample_majority(
+    X: np.ndarray,
+    y: np.ndarray,
+    w: np.ndarray,
+    g: np.ndarray,
+    *,
+    majority_label: int,
+    max_ratio: float,
+    seed: int,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    rng = np.random.default_rng(seed)
+    idx_maj = np.where(y == majority_label)[0]
+    idx_min = np.where(y != majority_label)[0]
+    if len(idx_min) == 0:
+        return X, y, w, g
+    n_keep = int(min(len(idx_maj), max_ratio * len(idx_min)))
+    keep_maj = rng.choice(idx_maj, size=n_keep, replace=False) if n_keep > 0 else np.array([], dtype=int)
+    keep = np.concatenate([idx_min, keep_maj])
+    rng.shuffle(keep)
+    return X[keep], y[keep], w[keep], g[keep]
+
+
+def _pick_split_binary(
+    X, y, groups, test_size, random_state,
+    tries=140, min_pos_test=30, min_pos_train=80
+):
+    rng = np.random.default_rng(random_state)
+    best = None
+    best_score = -1
+    for _ in range(tries):
+        rs = int(rng.integers(0, 1_000_000))
+        splitter = GroupShuffleSplit(n_splits=1, test_size=test_size, random_state=rs)
+        tr, te = next(splitter.split(X, y, groups=groups))
+        pos_te = int(np.sum(y[te] == 1))
+        pos_tr = int(np.sum(y[tr] == 1))
+        if pos_te >= min_pos_test and pos_tr >= min_pos_train:
+            if pos_te > best_score:
+                best = (tr, te)
+                best_score = pos_te
+    if best is None:
+        splitter = GroupShuffleSplit(n_splits=1, test_size=test_size, random_state=random_state)
+        best = next(splitter.split(X, y, groups=groups))
+    return best
+
+
+def window_vector_nan(feat_window: np.ndarray) -> np.ndarray:
+    feat_window = np.asarray(feat_window, dtype=np.float32)
+
+    if feat_window.ndim != 2 or feat_window.size == 0:
+        return np.zeros((1,), dtype=np.float32)
+
+    col_all_nan = np.all(np.isnan(feat_window), axis=0)
+    safe = feat_window.copy()
+
+    if np.any(col_all_nan):
+        safe[:, col_all_nan] = 0.0
+
+    mean = np.nanmean(safe, axis=0)
+    std = np.nanstd(safe, axis=0)
+
+    mn = np.nanmin(safe, axis=0)
+    mx = np.nanmax(safe, axis=0)
+
+    delta = safe[-1] - safe[0]
+
+    out = np.concatenate([mean, std, mn, mx, delta], axis=0).astype(np.float32)
+    out = np.nan_to_num(out, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32)
+    return out
+
+
+
+def windowize_last_label(
+    feats: List[np.ndarray],
+    labels: List[int],
+    qual: List[float],
+    window: int,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    if len(feats) < window:
+        return np.zeros((0, 1), np.float32), np.zeros((0,), np.int32), np.zeros((0,), np.float32)
+
+    arr = np.stack(feats, axis=0)
+    cls = np.asarray(labels, dtype=np.int32)
+    q = np.asarray(qual, dtype=np.float32)
+
+    X, y, w = [], [], []
+    for i in range(window - 1, len(arr)):
+        w_feats = arr[i - window + 1: i + 1]
+        label = int(cls[i])
+        wq = float(np.nanmean(q[i - window + 1: i + 1]))
+        X.append(window_vector_nan(w_feats))
+        y.append(label)
+        w.append(float(np.clip(wq, 0.05, 1.0)))
+
+    return np.asarray(X, np.float32), np.asarray(y, np.int32), np.asarray(w, np.float32)
+
+
+def make_hgb(random_state: int) -> Pipeline:
+    return Pipeline(
+        [
+            ("imputer", SimpleImputer(strategy="median")),
+            ("scaler", StandardScaler()),
+            ("clf", HistGradientBoostingClassifier(
+                max_depth=3,
+                learning_rate=0.05,
+                max_iter=400,
+                random_state=random_state,
+            )),
+        ]
+    )
+
+
+def make_mlp(random_state: int) -> Pipeline:
+    return Pipeline(
+        [
+            ("imputer", SimpleImputer(strategy="median")),
+            ("scaler", StandardScaler()),
+            ("clf", MLPClassifier(
+                hidden_layer_sizes=(128, 64),
+                activation="relu",
+                solver="adam",
+                alpha=1e-4,
+                learning_rate_init=1e-3,
+                batch_size=128,
+                max_iter=500,
+                early_stopping=True,
+                n_iter_no_change=10,
+                validation_fraction=0.1,
+                random_state=random_state,
+            )),
+        ]
+    )
+
+
+def extract_frame_features_horizontal(
     pose33: Pose33,
     BodyLandmark,
     *,
@@ -159,8 +307,11 @@ def extract_frame_features(
     R_ANK = idx(BodyLandmark.RIGHT_ANKLE)
 
     key_idx = [NOSE, L_SH, R_SH, L_HIP, R_HIP, L_ANK, R_ANK]
-    quality, good = _quality_keypoints(pose33, key_idx)
-    if quality < min_quality or good < min_good_keypoints:
+    vis = np.array([float(pose33[i].get("visibility", 0.0)) for i in key_idx], dtype=np.float32)
+    pres = np.array([float(pose33[i].get("presence", 0.0)) for i in key_idx], dtype=np.float32)
+    q = float(np.mean(vis * pres))
+    good = int(np.sum((vis >= 0.5) & (pres >= 0.5)))
+    if q < min_quality or good < min_good_keypoints:
         return None
 
     def xyz(i: int):
@@ -212,105 +363,112 @@ def extract_frame_features(
         ],
         dtype=np.float32,
     )
-
-    return feats, float(np.clip(quality, 0.0, 1.0))
-
-
-def window_vector(feat_window: np.ndarray) -> np.ndarray:
-    mean = feat_window.mean(axis=0)
-    std = feat_window.std(axis=0)
-    mn = feat_window.min(axis=0)
-    mx = feat_window.max(axis=0)
-    delta = feat_window[-1] - feat_window[0]
-    return np.concatenate([mean, std, mn, mx, delta], axis=0).astype(np.float32)
+    return feats, float(np.clip(q, 0.0, 1.0))
 
 
-def windowize_last_label(
-    feats: List[np.ndarray],
-    labels: List[int],
-    qual: List[float],
-    window: int,
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    if len(feats) < window:
-        return np.zeros((0, 1), np.float32), np.zeros((0,), np.int32), np.zeros((0,), np.float32)
-
-    arr = np.stack(feats, axis=0)
-    cls = np.asarray(labels, dtype=np.int32)
-    q = np.asarray(qual, dtype=np.float32)
-
-    X, y, w = [], [], []
-    for i in range(window - 1, len(arr)):
-        w_feats = arr[i - window + 1 : i + 1]
-        label = int(cls[i])
-        wq = float(np.mean(q[i - window + 1 : i + 1]))
-        X.append(window_vector(w_feats))
-        y.append(label)
-        w.append(float(np.clip(wq, 0.05, 1.0)))
-
-    return np.asarray(X, np.float32), np.asarray(y, np.int32), np.asarray(w, np.float32)
-
-
-def _downsample_majority(
-    X: np.ndarray,
-    y: np.ndarray,
-    w: np.ndarray,
-    g: np.ndarray,
+def extract_frame_features_fall(
+    pose33: Pose33,
+    BodyLandmark,
     *,
-    majority_label: int,
-    max_ratio: float,
-    seed: int,
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    rng = np.random.default_rng(seed)
-    idx_maj = np.where(y == majority_label)[0]
-    idx_min = np.where(y != majority_label)[0]
-    if len(idx_min) == 0:
-        return X, y, w, g
-    n_keep = int(min(len(idx_maj), max_ratio * len(idx_min)))
-    keep_maj = rng.choice(idx_maj, size=n_keep, replace=False) if n_keep > 0 else np.array([], dtype=int)
-    keep = np.concatenate([idx_min, keep_maj])
-    rng.shuffle(keep)
-    return X[keep], y[keep], w[keep], g[keep]
+    min_vis_point: float = 0.55,
+    min_pres_point: float = 0.55,
+    min_required_core_points: int = 3,
+) -> Optional[Tuple[np.ndarray, float]]:
+    idx = lambda e: int(e.value) if hasattr(e, "value") else int(e)
 
+    NOSE = idx(BodyLandmark.NOSE)
+    L_SH = idx(BodyLandmark.LEFT_SHOULDER)
+    R_SH = idx(BodyLandmark.RIGHT_SHOULDER)
+    L_HIP = idx(BodyLandmark.LEFT_HIP)
+    R_HIP = idx(BodyLandmark.RIGHT_HIP)
+    L_ANK = idx(BodyLandmark.LEFT_ANKLE)
+    R_ANK = idx(BodyLandmark.RIGHT_ANKLE)
 
-def _binary_class_weight(y: np.ndarray) -> np.ndarray:
-    counts = np.bincount(y, minlength=2).astype(np.float32)
-    counts[counts == 0] = 1.0
-    w = (len(y) / (2.0 * counts)).astype(np.float32)
-    return w[y]
+    core = [L_SH, R_SH, L_HIP, R_HIP, L_ANK, R_ANK]
 
+    vis = np.array([float(pose33[i].get("visibility", 0.0)) for i in range(min(33, len(pose33)))], dtype=np.float32)
+    pres = np.array([float(pose33[i].get("presence", 0.0)) for i in range(min(33, len(pose33)))], dtype=np.float32)
+    ok = (vis >= min_vis_point) & (pres >= min_pres_point)
 
-def _pick_split_binary(X, y, groups, test_size, random_state, tries=120, min_pos_test=30, min_pos_train=80):
-    rng = np.random.default_rng(random_state)
-    best = None
-    best_score = -1
-    for _ in range(tries):
-        rs = int(rng.integers(0, 1_000_000))
-        splitter = GroupShuffleSplit(n_splits=1, test_size=test_size, random_state=rs)
-        tr, te = next(splitter.split(X, y, groups=groups))
-        pos_te = int(np.sum(y[te] == 1))
-        pos_tr = int(np.sum(y[tr] == 1))
-        if pos_te >= min_pos_test and pos_tr >= min_pos_train:
-            if pos_te > best_score:
-                best = (tr, te)
-                best_score = pos_te
-    if best is None:
-        splitter = GroupShuffleSplit(n_splits=1, test_size=test_size, random_state=random_state)
-        best = next(splitter.split(X, y, groups=groups))
-    return best
+    core_ok = int(np.sum(ok[core]))
+    if core_ok < min_required_core_points:
+        return None
 
+    q = float(np.mean((vis[core] * pres[core])[ok[core]])) if np.any(ok[core]) else 0.0
+    q = float(np.clip(q, 0.0, 1.0))
 
-def make_hgb(random_state: int) -> Pipeline:
-    return Pipeline(
+    xs = np.array([float(pose33[i].get("x", np.nan)) for i in range(min(33, len(pose33)))], dtype=np.float32)
+    ys = np.array([float(pose33[i].get("y", np.nan)) for i in range(min(33, len(pose33)))], dtype=np.float32)
+    zs = np.array([float(pose33[i].get("z", 0.0)) for i in range(min(33, len(pose33)))], dtype=np.float32)
+
+    xs[~ok] = np.nan
+    ys[~ok] = np.nan
+    zs[~ok] = np.nan
+
+    def p(i: int) -> np.ndarray:
+        return np.array([xs[i], ys[i], zs[i]], dtype=np.float32)
+
+    def mid(a: int, b: int) -> np.ndarray:
+        pa, pb = p(a), p(b)
+        if np.any(np.isnan(pa)) and np.any(np.isnan(pb)):
+            return np.array([np.nan, np.nan, np.nan], dtype=np.float32)
+        if np.any(np.isnan(pa)):
+            return pb
+        if np.any(np.isnan(pb)):
+            return pa
+        return (pa + pb) / 2.0
+
+    sh_mid = mid(L_SH, R_SH)
+    hip_mid = mid(L_HIP, R_HIP)
+    ank_mid = mid(L_ANK, R_ANK)
+
+    torso = sh_mid - hip_mid
+    torso_norm = np.linalg.norm(torso) if not np.any(np.isnan(torso)) else np.nan
+
+    sh_w = np.linalg.norm(p(L_SH) - p(R_SH)) if ok[L_SH] and ok[R_SH] else np.nan
+    hip_w = np.linalg.norm(p(L_HIP) - p(R_HIP)) if ok[L_HIP] and ok[R_HIP] else np.nan
+    body_h = np.linalg.norm(sh_mid - ank_mid) if not (np.any(np.isnan(sh_mid)) or np.any(np.isnan(ank_mid))) else np.nan
+
+    vert = np.array([0.0, -1.0, 0.0], dtype=np.float32)
+    if np.isnan(torso_norm) or torso_norm < 1e-6:
+        torso_tilt = np.nan
+    else:
+        c = float(np.clip(np.dot(torso, vert) / (float(torso_norm) * _norm(vert)), -1.0, 1.0))
+        torso_tilt = float(np.arccos(c))
+
+    if np.any(~np.isnan(xs)) and np.any(~np.isnan(ys)):
+        bx = xs[~np.isnan(xs)]
+        by = ys[~np.isnan(ys)]
+        if len(bx) >= 2 and len(by) >= 2:
+            bbox_w = float(np.max(bx) - np.min(bx))
+            bbox_h = float(np.max(by) - np.min(by))
+            bbox_ar = float(bbox_w / (bbox_h + 1e-6))
+        else:
+            bbox_ar = np.nan
+    else:
+        bbox_ar = np.nan
+
+    y_n = float(ys[NOSE]) if ok[NOSE] and not np.isnan(ys[NOSE]) else np.nan
+
+    feats = np.array(
         [
-            ("scaler", StandardScaler()),
-            ("clf", HistGradientBoostingClassifier(
-                max_depth=3,
-                learning_rate=0.05,
-                max_iter=400,
-                random_state=random_state,
-            )),
-        ]
+            torso_tilt,
+            (sh_w / (body_h + 1e-6)) if not (np.isnan(sh_w) or np.isnan(body_h)) else np.nan,
+            (hip_w / (body_h + 1e-6)) if not (np.isnan(hip_w) or np.isnan(body_h)) else np.nan,
+            body_h,
+            float(sh_mid[1]) if not np.isnan(sh_mid[1]) else np.nan,
+            float(hip_mid[1]) if not np.isnan(hip_mid[1]) else np.nan,
+            float(ank_mid[1]) if not np.isnan(ank_mid[1]) else np.nan,
+            float(sh_mid[0]) if not np.isnan(sh_mid[0]) else np.nan,
+            float(hip_mid[0]) if not np.isnan(hip_mid[0]) else np.nan,
+            float(ank_mid[0]) if not np.isnan(ank_mid[0]) else np.nan,
+            bbox_ar,
+            y_n,
+        ],
+        dtype=np.float32,
     )
+
+    return feats, q
 
 
 def build_xy_binary_fall(
@@ -320,8 +478,9 @@ def build_xy_binary_fall(
     pose_col: str,
     window: int = 7,
     margin: int = 6,
-    min_quality: float = 0.20,
-    min_good_keypoints: int = 4,
+    min_vis_point: float = 0.55,
+    min_pres_point: float = 0.55,
+    min_required_core_points: int = 3,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     X_all, y_all, g_all, w_all = [], [], [], []
 
@@ -367,7 +526,13 @@ def build_xy_binary_fall(
             if last_fi is not None and fi - last_fi > (2 * step):
                 flush()
 
-            out = extract_frame_features(best, BodyLandmark, min_quality=min_quality, min_good_keypoints=min_good_keypoints)
+            out = extract_frame_features_fall(
+                best,
+                BodyLandmark,
+                min_vis_point=min_vis_point,
+                min_pres_point=min_pres_point,
+                min_required_core_points=min_required_core_points,
+            )
             if out is None:
                 if last_fi is not None and fi - last_fi > step:
                     flush()
@@ -385,7 +550,7 @@ def build_xy_binary_fall(
         flush()
 
     if not X_all:
-        raise ValueError("No samples for FALL model. Lower min_quality/min_good_keypoints or margin/window.")
+        raise ValueError("No samples for FALL model. Relax per-point thresholds or window/margin.")
 
     X = np.vstack(X_all).astype(np.float32)
     y = np.concatenate(y_all).astype(np.int32)
@@ -448,7 +613,12 @@ def build_xy_binary_horizontal_from_final_falled(
             if last_fi is not None and fi - last_fi > (2 * step):
                 flush()
 
-            out = extract_frame_features(best, BodyLandmark, min_quality=min_quality, min_good_keypoints=min_good_keypoints)
+            out = extract_frame_features_horizontal(
+                best,
+                BodyLandmark,
+                min_quality=min_quality,
+                min_good_keypoints=min_good_keypoints,
+            )
             if out is None:
                 if last_fi is not None and fi - last_fi > step:
                     flush()
@@ -466,7 +636,7 @@ def build_xy_binary_horizontal_from_final_falled(
         flush()
 
     if not X_all:
-        raise ValueError("No samples for HORIZONTAL model. Try lower thresholds/window or larger falled_tail_frames.")
+        raise ValueError("No samples for HORIZONTAL model. Lower thresholds/window or increase tail frames.")
 
     X = np.vstack(X_all).astype(np.float32)
     y = np.concatenate(y_all).astype(np.int32)
@@ -475,7 +645,38 @@ def build_xy_binary_horizontal_from_final_falled(
     return X, y, g, w
 
 
-def train_binary_model_random_search(
+def _fit_search(
+    base: Pipeline,
+    param_dist: Dict[str, Any],
+    X_train: np.ndarray,
+    y_train: np.ndarray,
+    groups_train: np.ndarray,
+    *,
+    sample_weight: Optional[np.ndarray],
+    scoring: str,
+    n_iter: int,
+    random_state: int,
+) -> Pipeline:
+    cv = GroupKFold(n_splits=5)
+    search = RandomizedSearchCV(
+        base,
+        param_distributions=param_dist,
+        n_iter=n_iter,
+        scoring=scoring,
+        cv=cv,
+        random_state=random_state,
+        n_jobs=-1,
+        refit=True,
+        verbose=0,
+    )
+    if sample_weight is not None and _supports_sample_weight(base):
+        search.fit(X_train, y_train, clf__sample_weight=sample_weight, groups=groups_train)
+    else:
+        search.fit(X_train, y_train, groups=groups_train)
+    return search.best_estimator_
+
+
+def train_binary_model_random_search_best_of_two(
     X: np.ndarray,
     y: np.ndarray,
     groups: np.ndarray,
@@ -484,25 +685,29 @@ def train_binary_model_random_search(
     random_state: int,
     test_size: float = 0.2,
     max_majority_ratio: float = 2.5,
-    n_iter_search: int = 50,
+    n_iter_search: int = 30,
     scoring: str = "f1",
 ) -> Pipeline:
-    tr, te = _pick_split_binary(X, y, groups, test_size=test_size, random_state=random_state, tries=140)
+    tr, te = _pick_split_binary(X, y, groups, test_size=test_size, random_state=random_state)
 
     X_train, y_train, g_train, q_train = X[tr], y[tr], groups[tr], quality_w[tr]
     X_test, y_test = X[te], y[te]
 
     maj_label = 0 if np.sum(y_train == 0) >= np.sum(y_train == 1) else 1
     X_train, y_train, q_train, g_train = _downsample_majority(
-        X_train, y_train, q_train, g_train, majority_label=maj_label, max_ratio=max_majority_ratio, seed=random_state
+        X_train, y_train, q_train, g_train,
+        majority_label=maj_label,
+        max_ratio=max_majority_ratio,
+        seed=random_state,
     )
 
     cw = _binary_class_weight(y_train).astype(np.float32)
     sw = cw * np.clip(q_train, 0.05, 1.0)
 
-    base = make_hgb(random_state=random_state)
+    hgb = make_hgb(random_state=random_state)
+    mlp = make_mlp(random_state=random_state)
 
-    param_dist = {
+    hgb_params = {
         "clf__max_depth": [2, 3, 4, 5],
         "clf__learning_rate": [0.02, 0.05, 0.08, 0.12],
         "clf__max_iter": [200, 300, 450, 650],
@@ -510,26 +715,55 @@ def train_binary_model_random_search(
         "clf__l2_regularization": [0.0, 0.1, 0.5, 1.0],
     }
 
-    cv = GroupKFold(n_splits=5)
-    search = RandomizedSearchCV(
-        base,
-        param_distributions=param_dist,
-        n_iter=n_iter_search,
+    mlp_params = {
+        "clf__hidden_layer_sizes": [(64,), (128,), (256,), (128, 64), (256, 128), (128, 128)],
+        "clf__activation": ["relu", "tanh"],
+        "clf__alpha": [1e-5, 1e-4, 1e-3, 1e-2],
+        "clf__learning_rate_init": [1e-4, 3e-4, 1e-3, 3e-3],
+        "clf__batch_size": [64, 128, 256],
+        "clf__max_iter": [300, 500, 700],
+    }
+
+    print("Train support:", np.bincount(y_train, minlength=2), "Test support:", np.bincount(y_test, minlength=2))
+
+    hgb_best = _fit_search(
+        hgb, hgb_params,
+        X_train, y_train, g_train,
+        sample_weight=sw,
         scoring=scoring,
-        cv=cv,
+        n_iter=n_iter_search,
         random_state=random_state,
-        n_jobs=-1,
-        refit=True,
-        verbose=0,
     )
-    search.fit(X_train, y_train, clf__sample_weight=sw, groups=g_train)
-    model = search.best_estimator_
+    pred_hgb = hgb_best.predict(X_test)
+    f1_hgb = float(f1_score(y_test, pred_hgb, pos_label=1))
 
-    pred = model.predict(X_test)
-    print("Confusion:\n", confusion_matrix(y_test, pred))
-    print(classification_report(y_test, pred, digits=4, target_names=["neg", "pos"]))
+    print("\n=== HGB ===")
+    print("F1(pos):", f"{f1_hgb:.4f}")
+    print("Confusion:\n", confusion_matrix(y_test, pred_hgb))
+    print(classification_report(y_test, pred_hgb, digits=4, target_names=["no_fall", "fall"]))
 
-    return model
+    mlp_best = _fit_search(
+        mlp, mlp_params,
+        X_train, y_train, g_train,
+        sample_weight=None,
+        scoring=scoring,
+        n_iter=max(10, n_iter_search // 2),
+        random_state=random_state + 999,
+    )
+    pred_mlp = mlp_best.predict(X_test)
+    f1_mlp = float(f1_score(y_test, pred_mlp, pos_label=1))
+
+    print("\n=== MLP ===")
+    print("F1(pos):", f"{f1_mlp:.4f}")
+    print("Confusion:\n", confusion_matrix(y_test, pred_mlp))
+    print(classification_report(y_test, pred_mlp, digits=4, target_names=["no_fall", "fall"]))
+
+    if f1_mlp > f1_hgb:
+        print("\nChosen: MLP")
+        return mlp_best
+
+    print("\nChosen: HGB")
+    return hgb_best
 
 
 def train_and_save_models(
@@ -541,8 +775,11 @@ def train_and_save_models(
     window: int = 7,
     margin: int = 6,
     falled_tail_frames: int = 6,
-    min_quality: float = 0.20,
-    min_good_keypoints: int = 4,
+    horizontal_min_quality: float = 0.20,
+    horizontal_min_good_keypoints: int = 4,
+    fall_min_vis_point: float = 0.55,
+    fall_min_pres_point: float = 0.55,
+    fall_min_required_core_points: int = 3,
     within_fall_only_for_horizontal: bool = True,
     random_state: int = 42,
     n_iter_search: int = 30,
@@ -556,11 +793,12 @@ def train_and_save_models(
         pose_col=pose_col,
         window=window,
         margin=margin,
-        min_quality=min_quality,
-        min_good_keypoints=min_good_keypoints,
+        min_vis_point=fall_min_vis_point,
+        min_pres_point=fall_min_pres_point,
+        min_required_core_points=fall_min_required_core_points,
     )
-    print("FALL global support:", np.bincount(yf, minlength=2))
-    fall_model = train_binary_model_random_search(
+    print("FALL support:", np.bincount(yf, minlength=2))
+    fall_model = train_binary_model_random_search_best_of_two(
         Xf, yf, gf, wf,
         random_state=random_state,
         n_iter_search=n_iter_search,
@@ -573,12 +811,12 @@ def train_and_save_models(
         pose_col=pose_col,
         window=window,
         falled_tail_frames=falled_tail_frames,
-        min_quality=min_quality,
-        min_good_keypoints=min_good_keypoints,
+        min_quality=horizontal_min_quality,
+        min_good_keypoints=horizontal_min_good_keypoints,
         within_fall_only=within_fall_only_for_horizontal,
     )
-    print("HORIZONTAL global support:", np.bincount(yh, minlength=2))
-    horizontal_model = train_binary_model_random_search(
+    print("HORIZONTAL support:", np.bincount(yh, minlength=2))
+    horizontal_model = train_binary_model_random_search_best_of_two(
         Xh, yh, gh, wh,
         random_state=random_state + 1,
         n_iter_search=n_iter_search,
@@ -594,8 +832,11 @@ def train_and_save_models(
             "window": window,
             "margin": margin,
             "falled_tail_frames": falled_tail_frames,
-            "min_quality": min_quality,
-            "min_good_keypoints": min_good_keypoints,
+            "horizontal_min_quality": horizontal_min_quality,
+            "horizontal_min_good_keypoints": horizontal_min_good_keypoints,
+            "fall_min_vis_point": fall_min_vis_point,
+            "fall_min_pres_point": fall_min_pres_point,
+            "fall_min_required_core_points": fall_min_required_core_points,
             "within_fall_only_for_horizontal": within_fall_only_for_horizontal,
         },
     }
@@ -609,10 +850,9 @@ def load_models(path: str = "./data/icaro_models.joblib") -> Dict[str, Any]:
 
 def _proba_pos(model: Pipeline, X: np.ndarray) -> float:
     if hasattr(model, "predict_proba"):
-        return float(model.predict_proba(X)[0, 1])
-    clf = model.named_steps.get("clf", None)
-    if clf is not None and hasattr(clf, "predict_proba"):
-        return float(model.predict_proba(X)[0, 1])
+        p = model.predict_proba(X)
+        if p is not None and p.shape[1] >= 2:
+            return float(p[0, 1])
     if hasattr(model, "decision_function"):
         s = float(model.decision_function(X)[0])
         return float(1.0 / (1.0 + np.exp(-s)))
@@ -620,21 +860,28 @@ def _proba_pos(model: Pipeline, X: np.ndarray) -> float:
     return float(pred)
 
 
+
+
+
 if __name__ == "__main__":
-    dataset_obj = json.loads(open("./data/archive.json", "r", encoding="utf-8").read())
+    dataset_obj = json.loads(open("../data/archive.json", "r", encoding="utf-8").read())
     from util_landmarks import BodyLandmark
 
     bundle = train_and_save_models(
         dataset_obj,
         BodyLandmark,
-        save_path="./data/icaro_models.joblib",
+        save_path="../data/icaro_models.joblib",
         use_world=False,
         window=7,
         margin=6,
         falled_tail_frames=6,
-        min_quality=0.20,
-        min_good_keypoints=4,
+        horizontal_min_quality=0.20,
+        horizontal_min_good_keypoints=4,
+        fall_min_vis_point=0.55,
+        fall_min_pres_point=0.55,
+        fall_min_required_core_points=3,
         within_fall_only_for_horizontal=True,
         random_state=42,
         n_iter_search=30,
     )
+

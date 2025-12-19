@@ -1,13 +1,16 @@
 import mediapipe as mp
-
 from src.drawing import draw_pose_points
-from src.util_landmarks import GroundCoordinates
+from src.push_notification import send_push_notification
 from util_landmarks import BodyLandmark
 from mediapipe.tasks.python.vision.pose_landmarker import PoseLandmarkerResult
 from src.live_fall_detector import LiveManDownDetector
 from src.pipeline_horizontal_classification import load_models
 
 DETECTOR_ENABLED = True
+
+
+INHIBIT_MS = 60_000
+DETECTOR_DISABLED_UNTIL_MS = 0
 
 def _lm_to_dict(lm) -> dict:
     return {
@@ -30,14 +33,19 @@ def _result_to_frame_landmarks(result: PoseLandmarkerResult):
 
 def classify_live(result: PoseLandmarkerResult, image: mp.Image, timestamp_ms: int) -> None:
     draw_pose_points(image, result, wait_ms=1)
-    global DETECTOR_ENABLED
-    if not DETECTOR_ENABLED:
-        if result.pose_world_landmarks[0][BodyLandmark.LEFT_KNEE].x >= GroundCoordinates.X and result.pose_world_landmarks[0][BodyLandmark.RIGHT_KNEE].y >= GroundCoordinates.Y:
-            DETECTOR_ENABLED = True
 
-    global _detector
+    global DETECTOR_ENABLED, DETECTOR_DISABLED_UNTIL_MS, _detector
     if _detector is None:
         return
+
+    # --- NEW: if inhibited, keep feeding the buffer but do nothing for 1 minute ---
+    if not DETECTOR_ENABLED:
+        if timestamp_ms >= DETECTOR_DISABLED_UNTIL_MS:
+            DETECTOR_ENABLED = True
+        else:
+            frame_landmarks = _result_to_frame_landmarks(result)
+            _detector.update(frame_landmarks)  # keep buffer updated
+            return
 
     frame_landmarks = _result_to_frame_landmarks(result)
     out = _detector.update(frame_landmarks)
@@ -47,23 +55,35 @@ def classify_live(result: PoseLandmarkerResult, image: mp.Image, timestamp_ms: i
 
     if out["fall_event"]:
         print(f"[{timestamp_ms}ms] FALL prob={out['fall_prob']:.3f} hits={out['fall_hits']}")
+        if out['fall_prob'] > 0.92:
+            send_push_notification('Man Fall Detected', 'A fall was detected please check your app!')
+
+            # --- NEW: inhibit system for 1 minute after a fall is detected ---
+            DETECTOR_ENABLED = False
+            DETECTOR_DISABLED_UNTIL_MS = timestamp_ms + INHIBIT_MS
+            print(f"[{timestamp_ms}ms] DETECTOR INHIBITED until {DETECTOR_DISABLED_UNTIL_MS}ms")
+
         if out["horizontal_event"]:
-            print(f"[{timestamp_ms}ms] MAN DOWN (HORIZONTAL) prob={out['horizontal_prob']:.3f} hits={out['horizontal_hits']}")
-
-
+            if out['fall_prob'] > 0.80:
+                send_push_notification('Man Down Detected', 'A man is down please check your app!')
+                print(f"[{timestamp_ms}ms] MAN DOWN (HORIZONTAL) prob={out['horizontal_prob']:.3f} hits={out['horizontal_hits']}")
 
 bundle = load_models("../data/icaro_models.joblib")
 
 _detector = LiveManDownDetector(
-    BodyLandmark,
-    fall_model=bundle["fall_model"],
-    horizontal_model=bundle["horizontal_model"],
-    window=bundle["cfg"]["window"],
-    min_quality=bundle["cfg"]["min_quality"],
-    min_good_keypoints=bundle["cfg"]["min_good_keypoints"],
-    fall_threshold=0.60,
-    horizontal_threshold=0.60,
-    consecutive_fall=3,
-    consecutive_horizontal=3,
-    reset_on_invalid=False,
+        BodyLandmark,
+        fall_model=bundle["fall_model"],
+        horizontal_model=bundle["horizontal_model"],
+        window=bundle["cfg"]["window"],
+        fall_min_vis_point=bundle["cfg"]["fall_min_vis_point"],
+        fall_min_pres_point=bundle["cfg"]["fall_min_pres_point"],
+        fall_min_required_core_points=bundle["cfg"]["fall_min_required_core_points"],
+        horizontal_min_quality=bundle["cfg"]["horizontal_min_quality"],
+        horizontal_min_good_keypoints=bundle["cfg"]["horizontal_min_good_keypoints"],
+        fall_threshold=0.60,
+        horizontal_threshold=0.60,
+        consecutive_fall=3,
+        consecutive_horizontal=3,
+        reset_on_invalid=False,
 )
+
