@@ -1,16 +1,16 @@
+import argparse
 import time
 import cv2
 import mediapipe as mp
 import pandas as pd
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
-from mediapipe.tasks.python.vision import PoseLandmarker, PoseLandmarkerResult
+from mediapipe.tasks.python.vision import PoseLandmarkerResult
 
 from drawing import draw_pose_points, show_single_image
-
-
-def pose_result_callback(result: PoseLandmarkerResult, image: mp.Image, timestamp_ms: int) -> None:
-    draw_pose_points(image, result, wait_ms=1)
+from src.calibration import calibrate_ground_for_stream
+from src.classify_live import classify_live
+from src.util_landmarks import GroundCoordinates
 
 
 def _open_capture(path: str, webcam: bool) -> cv2.VideoCapture:
@@ -90,13 +90,13 @@ def pose_stream(
 
 
 def pose_point(path: str, running_mode: vision.RunningMode, webcam: bool = True):
-    base_options = python.BaseOptions(model_asset_path="./data/pose_landmarker_heavy.task")
+    base_options = python.BaseOptions(model_asset_path="../data/pose_landmarker_heavy.task")
 
     if running_mode == vision.RunningMode.LIVE_STREAM:
         options = vision.PoseLandmarkerOptions(
             base_options=base_options,
             running_mode=running_mode,
-            result_callback=pose_result_callback,
+            result_callback=classify_live,
             output_segmentation_masks=False,
             num_poses=10,
         )
@@ -118,6 +118,22 @@ def pose_point(path: str, running_mode: vision.RunningMode, webcam: bool = True)
 
     return pose_stream(path, detector, running_mode=running_mode, webcam=webcam)
 
+def main(running_mode: vision.RunningMode):
+    if running_mode == vision.RunningMode.LIVE_STREAM:
+        if GroundCoordinates.X == 0 and GroundCoordinates.Y == 0 and GroundCoordinates.Z == 0:
+            try:
+                frame = pd.read_json("../data/calibration_result.json")
+                print('Loaded calibration frame')
+                GroundCoordinates.X = frame["x"].values[0]
+                GroundCoordinates.Y = frame["y"].values[0]
+                GroundCoordinates.Z = frame["z"].values[0]
+                print(f'Loaded ground coordinates X {GroundCoordinates.X} Y {GroundCoordinates.Y} Z {GroundCoordinates.Z}')
+            except FileNotFoundError:
+                calibrate_ground_for_stream("", webcam=True)
+            pose_point("./data/images/video (10).avi", vision.RunningMode.LIVE_STREAM, webcam=True)
+    else:
+        pose_point("./data/images/video (10).avi", vision.RunningMode.VIDEO, webcam=False)
+
 
 if __name__ == "__main__":
-    pose_point("./data/images/video (10).avi", vision.RunningMode.VIDEO, webcam=False)
+    main(vision.RunningMode.LIVE_STREAM)

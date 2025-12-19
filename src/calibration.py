@@ -37,8 +37,8 @@ def pose_result_callback(result: PoseLandmarkerResult, image: mp.Image, timestam
         right_knee = result.pose_world_landmarks[0][BodyLandmark.RIGHT_KNEE]
 
         if (
-            left_knee.presence > 0.60 and left_knee.visibility > 0.80 and
-            right_knee.presence > 0.80 and right_knee.visibility > 0.60
+            left_knee.presence > 0.75 and left_knee.visibility > 0.70 and
+            right_knee.presence > 0.75 and right_knee.visibility > 0.70
         ):
             GROUND = {
                 "x": (left_knee.x + right_knee.x) / 2,
@@ -53,7 +53,6 @@ def _timestamp_ms(cap: cv2.VideoCapture, webcam: bool, frame_index: int) -> int:
         ms = cap.get(cv2.CAP_PROP_POS_MSEC)
         if ms and ms > 0:
             return int(ms)
-    # webcam or fallback
     return int(frame_index * (1000 / 30))
 
 
@@ -63,14 +62,14 @@ def calibrate_ground_for_stream(path: str, webcam: bool = True):
     print("Starting calibration...")
 
     options_pose = PoseLandmarkerOptions(
-        base_options=BaseOptions(model_asset_path="./data/pose_landmarker_heavy.task"),
+        base_options=BaseOptions(model_asset_path="../data/pose_landmarker_heavy.task"),
         running_mode=RunningMode.LIVE_STREAM,
         result_callback=pose_result_callback,
-        output_segmentation_masks=False,  # reduce complexity; enable only if needed
+        output_segmentation_masks=False,
     )
 
     options_gesture = GestureRecognizerOptions(
-        base_options=BaseOptions(model_asset_path="./data/gesture_recognizer.task"),
+        base_options=BaseOptions(model_asset_path="../data/gesture_recognizer.task"),
         running_mode=RunningMode.LIVE_STREAM,
         result_callback=print_result,
     )
@@ -121,10 +120,10 @@ def calibrate_ground_for_stream(path: str, webcam: bool = True):
                 GroundCoordinates.X = GROUND["x"]
                 GroundCoordinates.Y = GROUND["y"]
                 GroundCoordinates.Z = GROUND["z"]
-                pd.DataFrame([GROUND]).to_json("./data/calibration_result.json")
+                pd.DataFrame([GROUND]).to_json("../data/calibration_result.json")
                 break
 
         cap.release()
 
 
-calibrate_ground_for_stream("", webcam=True)
+
