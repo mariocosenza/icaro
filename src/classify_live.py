@@ -1,6 +1,7 @@
 import mediapipe as mp
 from src.drawing import draw_pose_points
 from src.push_notification import send_push_notification
+from src.util_landmarks import GroundCoordinates
 from util_landmarks import BodyLandmark
 from mediapipe.tasks.python.vision.pose_landmarker import PoseLandmarkerResult
 from src.live_fall_detector import LiveManDownDetector
@@ -38,13 +39,12 @@ def classify_live(result: PoseLandmarkerResult, image: mp.Image, timestamp_ms: i
     if _detector is None:
         return
 
-    # --- NEW: if inhibited, keep feeding the buffer but do nothing for 1 minute ---
     if not DETECTOR_ENABLED:
-        if timestamp_ms >= DETECTOR_DISABLED_UNTIL_MS:
+        if timestamp_ms >= DETECTOR_DISABLED_UNTIL_MS and result.pose_landmarks[0][BodyLandmark.LEFT_SHOULDER].y > GroundCoordinates.Y:
             DETECTOR_ENABLED = True
         else:
             frame_landmarks = _result_to_frame_landmarks(result)
-            _detector.update(frame_landmarks)  # keep buffer updated
+            _detector.update(frame_landmarks)
             return
 
     frame_landmarks = _result_to_frame_landmarks(result)
