@@ -93,7 +93,7 @@ def pose_stream(
     running_mode: vision.RunningMode,
     webcam: bool = False,
     visualize: bool = False,
-    frame_stride: int = 1,  # LATEST CHANGE: do not skip frames to reduce jerk
+    frame_stride: int = 1,
     resize_width: str = "medium"
 ) -> pd.DataFrame:
     cap = cv2.VideoCapture(0 if webcam else path)
@@ -207,7 +207,7 @@ def main(running_mode: vision.RunningMode, path: str = "", quality="medium"):
                 logging.info(f'Loaded ground coordinates X {GroundCoordinates.X} Y {GroundCoordinates.Y} Z {GroundCoordinates.Z}')
             except FileNotFoundError:
                 calibrate_ground_for_stream("", webcam=True)
-        pose_point("", vision.RunningMode.LIVE_STREAM, webcam=True, quality=quality)
+        pose_point(path, vision.RunningMode.LIVE_STREAM, webcam=True, quality=quality)
     else:
         pose_point(path, vision.RunningMode.VIDEO, webcam=False)
 
