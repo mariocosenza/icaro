@@ -1,6 +1,7 @@
 package it.unisa.icaro.presentation
 
 import android.content.Context
+import android.content.Intent
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
@@ -13,9 +14,15 @@ class FirebaseNotificationService : FirebaseMessagingService() {
 
     override fun onMessageReceived(message: RemoteMessage) {
         super.onMessageReceived(message)
-        if (message.from?.endsWith("/topic/fall") == true) {
-            measureAndSendHeartRate()
-        }
+
+        Log.d("FIREBASE_DEBUG", "Message received from: ${message.from}")
+        Log.d("FIREBASE_DEBUG", "Data payload: ${message.data}")
+
+        val intent = Intent("FALL_EVENT")
+        intent.setPackage(packageName)
+        sendBroadcast(intent)
+
+        measureAndSendHeartRate()
     }
 
     private fun measureAndSendHeartRate() {
@@ -23,7 +30,7 @@ class FirebaseNotificationService : FirebaseMessagingService() {
         val heartRateSensor = sensorManager.getDefaultSensor(Sensor.TYPE_HEART_RATE)
 
         if (heartRateSensor == null) {
-            Log.e("ICARO_SERVICE", "No Heart Rate Sensor found on this device.")
+            Log.e("ICARO_SERVICE", "No Heart Rate Sensor found")
             return
         }
 
@@ -32,8 +39,7 @@ class FirebaseNotificationService : FirebaseMessagingService() {
         val listener = object : SensorEventListener {
             override fun onSensorChanged(event: SensorEvent?) {
                 if (event != null && event.values.isNotEmpty()) {
-                    val value = event.values[0]
-                    readings.add(value)
+                    readings.add(event.values[0])
                 }
             }
             override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
@@ -44,7 +50,7 @@ class FirebaseNotificationService : FirebaseMessagingService() {
         try {
             Thread.sleep(2000)
         } catch (e: InterruptedException) {
-            Log.e("ICARO_SERVICE", "Sleep interrupted", e)
+            e.printStackTrace()
         }
 
         sensorManager.unregisterListener(listener)
@@ -53,13 +59,13 @@ class FirebaseNotificationService : FirebaseMessagingService() {
             val meanValue = readings.average()
             sendHeartRateToApi(meanValue)
         } else {
-            Log.w("ICARO_SERVICE", "No heart rate data collected in 2 seconds.")
+            Log.w("ICARO_SERVICE", "No data collected")
         }
     }
 
     private fun sendHeartRateToApi(meanHeartbeat: Double) {
         try {
-            val targetUrl = "http://192.168.1.15:8000/api/v1/mesure/${meanHeartbeat.toInt()}"
+            val targetUrl = "http://192.168.1.15:8000/api/v1/measure/${meanHeartbeat.toInt()}"
             val response = khttp.post(url = targetUrl)
 
             if (response.statusCode == 200) {
