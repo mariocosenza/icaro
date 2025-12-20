@@ -4,7 +4,7 @@ from typing import Union, Dict, Optional, Any, Tuple
 import numpy as np
 from sklearn.pipeline import Pipeline
 
-from src.pipeline_horizontal_classification import (
+from pipeline_horizontal_classification import (
     Pose33, extract_frame_features_fall, extract_frame_features_horizontal,
     PoseCell, select_best_pose, window_vector_nan, _proba_pos
 )
@@ -136,7 +136,6 @@ class LiveManDownDetector:
         if len(self._fall_feat_buf) < self.window:
             return {"ready": False, "reason": "warming_up", "buffer": len(self._fall_feat_buf)}
 
-        # --- NEW: gate ALL predictions if fall window quality < 0.65 ---
         fall_q = self._window_quality(self._fall_q_buf)
         if fall_q < self.min_window_quality:
             self._fall_hits = 0

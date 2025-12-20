@@ -69,7 +69,7 @@ class AlertsPage extends StatefulWidget {
 }
 
 class _AlertsPageState extends State<AlertsPage> {
-  static const String endpoint = "http://192.168.1.15:5000/api/v1/allerts";
+  static const String endpoint = "http://192.168.1.15:8000/api/v1/allerts";
 
   bool _loading = true;
   String? _error;

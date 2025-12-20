@@ -1,4 +1,6 @@
+import logging
 import os
+
 os.environ["GLOG_minloglevel"] = "2"
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
 
@@ -15,6 +17,8 @@ from mediapipe.tasks.python.vision.pose_landmarker import PoseLandmarkerOptions,
 from drawing import draw_pose_points
 from util_landmarks import GroundCoordinates, BodyLandmark
 
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
 THUMB_UP = False
 CALIBRATED = False
 GROUND = {"x": 0, "y": 0, "z": 0}
@@ -23,7 +27,7 @@ GROUND = {"x": 0, "y": 0, "z": 0}
 def print_result(result: GestureRecognizerResult, output_image: mp.Image, timestamp_ms: int):
     global THUMB_UP
     if result.gestures and result.gestures[0] and result.gestures[0][0].category_name == "Thumb_Up":
-        print("Thumb_Up")
+        logging.info("Thumb_Up")
         THUMB_UP = True
 
 
@@ -59,7 +63,7 @@ def _timestamp_ms(cap: cv2.VideoCapture, webcam: bool, frame_index: int) -> int:
 def calibrate_ground_for_stream(path: str, webcam: bool = True):
     global THUMB_UP, CALIBRATED
 
-    print("Starting calibration...")
+    logging.info("Starting calibration...")
 
     options_pose = PoseLandmarkerOptions(
         base_options=BaseOptions(model_asset_path="../data/pose_landmarker_heavy.task"),
@@ -74,7 +78,6 @@ def calibrate_ground_for_stream(path: str, webcam: bool = True):
         result_callback=print_result,
     )
 
-    # 1) Wait for thumb-up
     with GestureRecognizer.create_from_options(options=options_gesture) as recognizer:
         cap = cv2.VideoCapture(0 if webcam else path)
         frame_index = 0
@@ -92,14 +95,13 @@ def calibrate_ground_for_stream(path: str, webcam: bool = True):
 
             frame_index += 1
             if THUMB_UP:
-                print("Starting knee detection...")
+                logging.info("Starting knee detection...")
                 break
 
         cap.release()
 
-    # 2) Calibrate knees
     with PoseLandmarker.create_from_options(options=options_pose) as landmark:
-        print("DO NOT MOVE")
+        logging.warning("DO NOT MOVE")
         cap = cv2.VideoCapture(0 if webcam else path)
         frame_index = 0
 
@@ -116,7 +118,7 @@ def calibrate_ground_for_stream(path: str, webcam: bool = True):
 
             frame_index += 1
             if CALIBRATED:
-                print("Calibration complete.")
+                logging.info("Calibration complete.")
                 GroundCoordinates.X = GROUND["x"]
                 GroundCoordinates.Y = GROUND["y"]
                 GroundCoordinates.Z = GROUND["z"]
@@ -124,6 +126,3 @@ def calibrate_ground_for_stream(path: str, webcam: bool = True):
                 break
 
         cap.release()
-
-
-

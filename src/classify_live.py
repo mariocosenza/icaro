@@ -1,16 +1,17 @@
+import logging
 import mediapipe as mp
-from src.drawing import draw_pose_points
-from src.mongodb import insert_message_mongo_db
-from src.push_notification import send_push_notification
-from src.util_landmarks import GroundCoordinates
+from drawing import draw_pose_points
+from mongodb import insert_message_mongo_db
+from push_notification import send_push_notification
+from util_landmarks import GroundCoordinates
 from util_landmarks import BodyLandmark
 from mediapipe.tasks.python.vision.pose_landmarker import PoseLandmarkerResult
-from src.live_fall_detector import LiveManDownDetector
-from src.pipeline_horizontal_classification import load_models
+from live_fall_detector import LiveManDownDetector
+from pipeline_horizontal_classification import load_models
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 DETECTOR_ENABLED = True
-
-
 INHIBIT_MS = 60_000
 DETECTOR_DISABLED_UNTIL_MS = 0
 
@@ -55,20 +56,20 @@ def classify_live(result: PoseLandmarkerResult, image: mp.Image, timestamp_ms: i
         return
 
     if out["fall_event"]:
-        print(f"[{timestamp_ms}ms] FALL prob={out['fall_prob']:.3f} hits={out['fall_hits']}")
+        logging.info(f"[{timestamp_ms}ms] FALL prob={out['fall_prob']:.3f} hits={out['fall_hits']}")
         if out['fall_prob'] > 0.92:
             send_push_notification('Man Fall Detected', 'A fall was detected please check your app!')
             insert_message_mongo_db("Fall Detected", "Fall detected at timestamp: " + str(timestamp_ms) + "ms", alert=True)
 
             DETECTOR_ENABLED = False
             DETECTOR_DISABLED_UNTIL_MS = timestamp_ms + INHIBIT_MS
-            print(f"[{timestamp_ms}ms] DETECTOR INHIBITED until {DETECTOR_DISABLED_UNTIL_MS}ms")
+            logging.info(f"[{timestamp_ms}ms] DETECTOR INHIBITED until {DETECTOR_DISABLED_UNTIL_MS}ms")
 
-        if out["horizontal_event"]:
-            if out['fall_prob'] > 0.80:
-                send_push_notification('Man Down Detected', 'A man is down please check your app!')
-                insert_message_mongo_db("Man Down Detected", "Man down detected at timestamp: " + str(timestamp_ms) + "ms", alert=True)
-                print(f"[{timestamp_ms}ms] MAN DOWN (HORIZONTAL) prob={out['horizontal_prob']:.3f} hits={out['horizontal_hits']}")
+    if out["horizontal_event"]:
+        if out['fall_prob'] > 0.80:
+            send_push_notification('Man Down Detected', 'A man is down please check your app!')
+            insert_message_mongo_db("Man Down Detected", "Man down detected at timestamp: " + str(timestamp_ms) + "ms", alert=True)
+            logging.info(f"[{timestamp_ms}ms] MAN DOWN (HORIZONTAL) prob={out['horizontal_prob']:.3f} hits={out['horizontal_hits']}")
 
 bundle = load_models("../data/icaro_models.joblib")
 
@@ -88,4 +89,3 @@ _detector = LiveManDownDetector(
         consecutive_horizontal=3,
         reset_on_invalid=False,
 )
-

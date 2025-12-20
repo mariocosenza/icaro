@@ -1,7 +1,7 @@
+import logging
 import json
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
-from collections import deque
 import inspect
 
 import numpy as np
@@ -16,6 +16,7 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import classification_report, confusion_matrix, f1_score
 
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 NORMAL = 0
 FALL = 1
@@ -724,7 +725,7 @@ def train_binary_model_random_search_best_of_two(
         "clf__max_iter": [300, 500, 700],
     }
 
-    print("Train support:", np.bincount(y_train, minlength=2), "Test support:", np.bincount(y_test, minlength=2))
+    logging.info(f"Train support: {np.bincount(y_train, minlength=2)} Test support: {np.bincount(y_test, minlength=2)}")
 
     hgb_best = _fit_search(
         hgb, hgb_params,
@@ -737,10 +738,10 @@ def train_binary_model_random_search_best_of_two(
     pred_hgb = hgb_best.predict(X_test)
     f1_hgb = float(f1_score(y_test, pred_hgb, pos_label=1))
 
-    print("\n=== HGB ===")
-    print("F1(pos):", f"{f1_hgb:.4f}")
-    print("Confusion:\n", confusion_matrix(y_test, pred_hgb))
-    print(classification_report(y_test, pred_hgb, digits=4, target_names=["no_fall", "fall"]))
+    logging.info("=== HGB ===")
+    logging.info(f"F1(pos): {f1_hgb:.4f}")
+    logging.info(f"Confusion:\n{confusion_matrix(y_test, pred_hgb)}")
+    logging.info(classification_report(y_test, pred_hgb, digits=4, target_names=["no_fall", "fall"]))
 
     mlp_best = _fit_search(
         mlp, mlp_params,
@@ -753,16 +754,16 @@ def train_binary_model_random_search_best_of_two(
     pred_mlp = mlp_best.predict(X_test)
     f1_mlp = float(f1_score(y_test, pred_mlp, pos_label=1))
 
-    print("\n=== MLP ===")
-    print("F1(pos):", f"{f1_mlp:.4f}")
-    print("Confusion:\n", confusion_matrix(y_test, pred_mlp))
-    print(classification_report(y_test, pred_mlp, digits=4, target_names=["no_fall", "fall"]))
+    logging.info("=== MLP ===")
+    logging.info(f"F1(pos): {f1_mlp:.4f}")
+    logging.info(f"Confusion:\n{confusion_matrix(y_test, pred_mlp)}")
+    logging.info(classification_report(y_test, pred_mlp, digits=4, target_names=["no_fall", "fall"]))
 
     if f1_mlp > f1_hgb:
-        print("\nChosen: MLP")
+        logging.info("Chosen: MLP")
         return mlp_best
 
-    print("\nChosen: HGB")
+    logging.info("Chosen: HGB")
     return hgb_best
 
 
@@ -797,7 +798,7 @@ def train_and_save_models(
         min_pres_point=fall_min_pres_point,
         min_required_core_points=fall_min_required_core_points,
     )
-    print("FALL support:", np.bincount(yf, minlength=2))
+    logging.info(f"FALL support: {np.bincount(yf, minlength=2)}")
     fall_model = train_binary_model_random_search_best_of_two(
         Xf, yf, gf, wf,
         random_state=random_state,
@@ -815,7 +816,7 @@ def train_and_save_models(
         min_good_keypoints=horizontal_min_good_keypoints,
         within_fall_only=within_fall_only_for_horizontal,
     )
-    print("HORIZONTAL support:", np.bincount(yh, minlength=2))
+    logging.info(f"HORIZONTAL support: {np.bincount(yh, minlength=2)}")
     horizontal_model = train_binary_model_random_search_best_of_two(
         Xh, yh, gh, wh,
         random_state=random_state + 1,
@@ -860,9 +861,6 @@ def _proba_pos(model: Pipeline, X: np.ndarray) -> float:
     return float(pred)
 
 
-
-
-
 if __name__ == "__main__":
     dataset_obj = json.loads(open("../data/archive.json", "r", encoding="utf-8").read())
     from util_landmarks import BodyLandmark
@@ -884,4 +882,3 @@ if __name__ == "__main__":
         random_state=42,
         n_iter_search=30,
     )
-

@@ -1,16 +1,17 @@
-import argparse
+import logging
 import time
 import cv2
 import mediapipe as mp
 import pandas as pd
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
-from mediapipe.tasks.python.vision import PoseLandmarkerResult
 
-from drawing import draw_pose_points, show_single_image
-from src.calibration import calibrate_ground_for_stream
-from src.classify_live import classify_live
-from src.util_landmarks import GroundCoordinates
+from drawing import show_single_image
+from calibration import calibrate_ground_for_stream
+from classify_live import classify_live
+from util_landmarks import GroundCoordinates
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 
 def _open_capture(path: str, webcam: bool) -> cv2.VideoCapture:
@@ -123,11 +124,11 @@ def main(running_mode: vision.RunningMode):
         if GroundCoordinates.X == 0 and GroundCoordinates.Y == 0 and GroundCoordinates.Z == 0:
             try:
                 frame = pd.read_json("../data/calibration_result.json")
-                print('Loaded calibration frame')
+                logging.info('Loaded calibration frame')
                 GroundCoordinates.X = frame["x"].values[0]
                 GroundCoordinates.Y = frame["y"].values[0]
                 GroundCoordinates.Z = frame["z"].values[0]
-                print(f'Loaded ground coordinates X {GroundCoordinates.X} Y {GroundCoordinates.Y} Z {GroundCoordinates.Z}')
+                logging.info(f'Loaded ground coordinates X {GroundCoordinates.X} Y {GroundCoordinates.Y} Z {GroundCoordinates.Z}')
             except FileNotFoundError:
                 calibrate_ground_for_stream("", webcam=True)
             pose_point("./data/images/video (10).avi", vision.RunningMode.LIVE_STREAM, webcam=True)
