@@ -47,7 +47,7 @@ def classify_live(result: PoseLandmarkerResult, image: mp.Image, timestamp_ms: i
         if LatestHeartbeat.NOTIED_FALL == False and LatestHeartbeat.BPM < 60:
             LatestHeartbeat.NOTIED_FALL = True
             asyncio.run(send_push_notification_heartbeat())
-        if timestamp_ms >= DETECTOR_DISABLED_UNTIL_MS and result.pose_landmarks[0][BodyLandmark.LEFT_SHOULDER].y > GroundCoordinates.Y:
+        if timestamp_ms >= DETECTOR_DISABLED_UNTIL_MS and result.pose_landmarks[0] and result.pose_landmarks[0][BodyLandmark.LEFT_SHOULDER].y > GroundCoordinates.Y:
             DETECTOR_ENABLED = True
             LatestHeartbeat.NOTIED_FALL = False
         else:
@@ -61,9 +61,15 @@ def classify_live(result: PoseLandmarkerResult, image: mp.Image, timestamp_ms: i
     if not out.get("ready", False):
         return
 
+    if out["horizontal_event"]:
+        if out['horizontal_prob'] > 0.70:
+            asyncio.run(send_push_notification('Man Down Detected', 'A man is down please check your app!'))
+            asyncio.run(insert_message_mongo_db("Man Down Detected", "Man down detected at timestamp: " + str(timestamp_ms) + "ms", alert=True))
+            logging.info(f"[{timestamp_ms}ms] MAN DOWN (HORIZONTAL) prob={out['horizontal_prob']:.3f} hits={out['horizontal_hits']}")
+
     if out["fall_event"]:
         logging.info(f"[{timestamp_ms}ms] FALL prob={out['fall_prob']:.3f} hits={out['fall_hits']}")
-        if out['fall_prob'] > 0.92:
+        if out['fall_prob'] > 0.98:
             asyncio.run(send_push_notification('Man Fall Detected', 'A fall was detected please check your app!'))
             asyncio.run(insert_message_mongo_db("Fall Detected", "Fall detected at timestamp: " + str(timestamp_ms) + "ms", alert=True))
 
@@ -71,11 +77,7 @@ def classify_live(result: PoseLandmarkerResult, image: mp.Image, timestamp_ms: i
             DETECTOR_DISABLED_UNTIL_MS = timestamp_ms + INHIBIT_MS
             logging.info(f"[{timestamp_ms}ms] DETECTOR INHIBITED until {DETECTOR_DISABLED_UNTIL_MS}ms")
 
-    if out["horizontal_event"]:
-        if out['fall_prob'] > 0.80:
-            asyncio.run(send_push_notification('Man Down Detected', 'A man is down please check your app!'))
-            asyncio.run(insert_message_mongo_db("Man Down Detected", "Man down detected at timestamp: " + str(timestamp_ms) + "ms", alert=True))
-            logging.info(f"[{timestamp_ms}ms] MAN DOWN (HORIZONTAL) prob={out['horizontal_prob']:.3f} hits={out['horizontal_hits']}")
+
 
 bundle = load_models("../data/icaro_models.joblib")
 
@@ -94,4 +96,5 @@ _detector = LiveManDownDetector(
         consecutive_fall=3,
         consecutive_horizontal=3,
         reset_on_invalid=False,
+        min_window_quality="high"
 )
