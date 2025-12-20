@@ -1,6 +1,9 @@
+import json
 import logging
 import os
 import sys
+from typing import Any
+
 from pymongo import MongoClient
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -25,7 +28,14 @@ async def insert_message_mongo_db(title: str, message: str, alert: bool) -> None
     })
 
 
-def get_all_data_from_mongo_db() -> list:
+def get_all_data_from_mongo_db() -> dict[str, Any]:
     dbname = get_database()
     collection = dbname["icaro"]
-    return list(collection.find())
+
+    docs: list[dict[str, Any]] = list(collection.find())
+
+    for d in docs:
+        if "_id" in d:
+            d["_id"] = str(d["_id"])
+
+    return {"alerts": docs}
