@@ -1,8 +1,10 @@
+import asyncio
 import logging
 import mediapipe as mp
 from drawing import draw_pose_points
 from mongodb import insert_message_mongo_db
 from push_notification import send_push_notification
+from push_notification import LatestHeartbeat, send_push_notification_heartbeat
 from util_landmarks import GroundCoordinates
 from util_landmarks import BodyLandmark
 from mediapipe.tasks.python.vision.pose_landmarker import PoseLandmarkerResult
@@ -12,7 +14,7 @@ from pipeline_horizontal_classification import load_models
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 DETECTOR_ENABLED = True
-INHIBIT_MS = 60_000
+INHIBIT_MS = 120_000
 DETECTOR_DISABLED_UNTIL_MS = 0
 
 def _lm_to_dict(lm) -> dict:
@@ -42,8 +44,12 @@ def classify_live(result: PoseLandmarkerResult, image: mp.Image, timestamp_ms: i
         return
 
     if not DETECTOR_ENABLED:
+        if LatestHeartbeat.NOTIED_FALL == False and LatestHeartbeat.BPM < 60:
+            LatestHeartbeat.NOTIED_FALL = True
+            asyncio.run(send_push_notification_heartbeat())
         if timestamp_ms >= DETECTOR_DISABLED_UNTIL_MS and result.pose_landmarks[0][BodyLandmark.LEFT_SHOULDER].y > GroundCoordinates.Y:
             DETECTOR_ENABLED = True
+            LatestHeartbeat.NOTIED_FALL = False
         else:
             frame_landmarks = _result_to_frame_landmarks(result)
             _detector.update(frame_landmarks)
@@ -58,8 +64,8 @@ def classify_live(result: PoseLandmarkerResult, image: mp.Image, timestamp_ms: i
     if out["fall_event"]:
         logging.info(f"[{timestamp_ms}ms] FALL prob={out['fall_prob']:.3f} hits={out['fall_hits']}")
         if out['fall_prob'] > 0.92:
-            send_push_notification('Man Fall Detected', 'A fall was detected please check your app!')
-            insert_message_mongo_db("Fall Detected", "Fall detected at timestamp: " + str(timestamp_ms) + "ms", alert=True)
+            asyncio.run(send_push_notification('Man Fall Detected', 'A fall was detected please check your app!'))
+            asyncio.run(insert_message_mongo_db("Fall Detected", "Fall detected at timestamp: " + str(timestamp_ms) + "ms", alert=True))
 
             DETECTOR_ENABLED = False
             DETECTOR_DISABLED_UNTIL_MS = timestamp_ms + INHIBIT_MS
@@ -67,8 +73,8 @@ def classify_live(result: PoseLandmarkerResult, image: mp.Image, timestamp_ms: i
 
     if out["horizontal_event"]:
         if out['fall_prob'] > 0.80:
-            send_push_notification('Man Down Detected', 'A man is down please check your app!')
-            insert_message_mongo_db("Man Down Detected", "Man down detected at timestamp: " + str(timestamp_ms) + "ms", alert=True)
+            asyncio.run(send_push_notification('Man Down Detected', 'A man is down please check your app!'))
+            asyncio.run(insert_message_mongo_db("Man Down Detected", "Man down detected at timestamp: " + str(timestamp_ms) + "ms", alert=True))
             logging.info(f"[{timestamp_ms}ms] MAN DOWN (HORIZONTAL) prob={out['horizontal_prob']:.3f} hits={out['horizontal_hits']}")
 
 bundle = load_models("../data/icaro_models.joblib")
