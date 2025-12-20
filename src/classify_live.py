@@ -1,5 +1,6 @@
 import mediapipe as mp
 from src.drawing import draw_pose_points
+from src.mongodb import insert_message_mongo_db
 from src.push_notification import send_push_notification
 from src.util_landmarks import GroundCoordinates
 from util_landmarks import BodyLandmark
@@ -57,8 +58,8 @@ def classify_live(result: PoseLandmarkerResult, image: mp.Image, timestamp_ms: i
         print(f"[{timestamp_ms}ms] FALL prob={out['fall_prob']:.3f} hits={out['fall_hits']}")
         if out['fall_prob'] > 0.92:
             send_push_notification('Man Fall Detected', 'A fall was detected please check your app!')
+            insert_message_mongo_db("Fall Detected", "Fall detected at timestamp: " + str(timestamp_ms) + "ms", alert=True)
 
-            # --- NEW: inhibit system for 1 minute after a fall is detected ---
             DETECTOR_ENABLED = False
             DETECTOR_DISABLED_UNTIL_MS = timestamp_ms + INHIBIT_MS
             print(f"[{timestamp_ms}ms] DETECTOR INHIBITED until {DETECTOR_DISABLED_UNTIL_MS}ms")
@@ -66,6 +67,7 @@ def classify_live(result: PoseLandmarkerResult, image: mp.Image, timestamp_ms: i
         if out["horizontal_event"]:
             if out['fall_prob'] > 0.80:
                 send_push_notification('Man Down Detected', 'A man is down please check your app!')
+                insert_message_mongo_db("Man Down Detected", "Man down detected at timestamp: " + str(timestamp_ms) + "ms", alert=True)
                 print(f"[{timestamp_ms}ms] MAN DOWN (HORIZONTAL) prob={out['horizontal_prob']:.3f} hits={out['horizontal_hits']}")
 
 bundle = load_models("../data/icaro_models.joblib")
