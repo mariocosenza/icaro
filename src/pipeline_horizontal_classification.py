@@ -3,7 +3,7 @@ import json
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
 import inspect
-
+from util_landmarks import BodyLandmark
 import numpy as np
 import pandas as pd
 import joblib
@@ -158,14 +158,14 @@ def _binary_class_weight(y: np.ndarray) -> np.ndarray:
 
 
 def _downsample_majority(
-    X: np.ndarray,
-    y: np.ndarray,
-    w: np.ndarray,
-    g: np.ndarray,
-    *,
-    majority_label: int,
-    max_ratio: float,
-    seed: int,
+        X: np.ndarray,
+        y: np.ndarray,
+        w: np.ndarray,
+        g: np.ndarray,
+        *,
+        majority_label: int,
+        max_ratio: float,
+        seed: int,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     rng = np.random.default_rng(seed)
     idx_maj = np.where(y == majority_label)[0]
@@ -180,8 +180,8 @@ def _downsample_majority(
 
 
 def _pick_split_binary(
-    X, y, groups, test_size, random_state,
-    tries=140, min_pos_test=30, min_pos_train=80
+        X, y, groups, test_size, random_state,
+        tries=140, min_pos_test=30, min_pos_train=80
 ):
     rng = np.random.default_rng(random_state)
     best = None
@@ -216,23 +216,27 @@ def window_vector_nan(feat_window: np.ndarray) -> np.ndarray:
 
     mean = np.nanmean(safe, axis=0)
     std = np.nanstd(safe, axis=0)
-
     mn = np.nanmin(safe, axis=0)
     mx = np.nanmax(safe, axis=0)
-
     delta = safe[-1] - safe[0]
 
-    out = np.concatenate([mean, std, mn, mx, delta], axis=0).astype(np.float32)
+    if safe.shape[0] > 1:
+        diffs = np.diff(safe, axis=0)
+        diffs_filled = np.nan_to_num(diffs, nan=0.0)
+        avg_speed = np.mean(np.abs(diffs_filled), axis=0)
+    else:
+        avg_speed = np.zeros_like(mean)
+
+    out = np.concatenate([mean, std, mn, mx, delta, avg_speed], axis=0).astype(np.float32)
     out = np.nan_to_num(out, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32)
     return out
 
-
-
 def windowize_last_label(
-    feats: List[np.ndarray],
-    labels: List[int],
-    qual: List[float],
-    window: int,
+        feats: List[np.ndarray],
+        labels: List[int],
+        qual: List[float],
+        window: int,
+        min_window_quality: float = 0.0,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     if len(feats) < window:
         return np.zeros((0, 1), np.float32), np.zeros((0,), np.int32), np.zeros((0,), np.float32)
@@ -243,9 +247,14 @@ def windowize_last_label(
 
     X, y, w = [], [], []
     for i in range(window - 1, len(arr)):
+        wq = float(np.nanmean(q[i - window + 1: i + 1]))
+
+        if wq < min_window_quality:
+            continue
+
         w_feats = arr[i - window + 1: i + 1]
         label = int(cls[i])
-        wq = float(np.nanmean(q[i - window + 1: i + 1]))
+
         X.append(window_vector_nan(w_feats))
         y.append(label)
         w.append(float(np.clip(wq, 0.05, 1.0)))
@@ -291,11 +300,11 @@ def make_mlp(random_state: int) -> Pipeline:
 
 
 def extract_frame_features_horizontal(
-    pose33: Pose33,
-    BodyLandmark,
-    *,
-    min_quality: float = 0.20,
-    min_good_keypoints: int = 4,
+        pose33: Pose33,
+        BodyLandmark,
+        *,
+        min_quality: float = 0.20,
+        min_good_keypoints: int = 4,
 ) -> Optional[Tuple[np.ndarray, float]]:
     idx = lambda e: int(e.value) if hasattr(e, "value") else int(e)
 
@@ -368,12 +377,12 @@ def extract_frame_features_horizontal(
 
 
 def extract_frame_features_fall(
-    pose33: Pose33,
-    BodyLandmark,
-    *,
-    min_vis_point: float = 0.55,
-    min_pres_point: float = 0.55,
-    min_required_core_points: int = 3,
+        pose33: Pose33,
+        BodyLandmark,
+        *,
+        min_vis_point: float = 0.55,
+        min_pres_point: float = 0.55,
+        min_required_core_points: int = 3,
 ) -> Optional[Tuple[np.ndarray, float]]:
     idx = lambda e: int(e.value) if hasattr(e, "value") else int(e)
 
@@ -473,15 +482,16 @@ def extract_frame_features_fall(
 
 
 def build_xy_binary_fall(
-    videos: List[VideoSample],
-    BodyLandmark,
-    *,
-    pose_col: str,
-    window: int = 7,
-    margin: int = 6,
-    min_vis_point: float = 0.55,
-    min_pres_point: float = 0.55,
-    min_required_core_points: int = 3,
+        videos: List[VideoSample],
+        BodyLandmark,
+        *,
+        pose_col: str,
+        window: int = 7,
+        margin: int = 6,
+        min_vis_point: float = 0.55,
+        min_pres_point: float = 0.55,
+        min_required_core_points: int = 3,
+        min_window_quality: float = 0.0,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     X_all, y_all, g_all, w_all = [], [], [], []
 
@@ -499,7 +509,11 @@ def build_xy_binary_fall(
         def flush():
             nonlocal feats_seg, cls_seg, q_seg
             if len(feats_seg) >= window:
-                Xw, yw, ww = windowize_last_label(feats_seg, cls_seg, q_seg, window=window)
+                Xw, yw, ww = windowize_last_label(
+                    feats_seg, cls_seg, q_seg,
+                    window=window,
+                    min_window_quality=min_window_quality
+                )
                 if len(Xw) > 0:
                     X_all.append(Xw)
                     y_all.append(yw)
@@ -518,11 +532,17 @@ def build_xy_binary_fall(
                     last_fi = None
                 continue
 
-            if ((v.start - margin) <= fi < v.start) or (v.end < fi <= (v.end + margin)):
+            if (v.start - margin) <= fi < v.start:
                 if last_fi is not None and fi - last_fi > step:
                     flush()
                     last_fi = None
                 continue
+
+            fall_end_strict = v.end - 2
+
+            is_falling = (v.start <= fi <= fall_end_strict)
+            label = FALL if is_falling else NORMAL
+
 
             if last_fi is not None and fi - last_fi > (2 * step):
                 flush()
@@ -541,7 +561,6 @@ def build_xy_binary_fall(
                 continue
 
             feat, qual = out
-            label = FALL if (v.start <= fi <= v.end) else NORMAL
 
             feats_seg.append(feat)
             cls_seg.append(label)
@@ -551,7 +570,7 @@ def build_xy_binary_fall(
         flush()
 
     if not X_all:
-        raise ValueError("No samples for FALL model. Relax per-point thresholds or window/margin.")
+        raise ValueError("No samples for FALL model. Relax per-point thresholds, quality gate, or window/margin.")
 
     X = np.vstack(X_all).astype(np.float32)
     y = np.concatenate(y_all).astype(np.int32)
@@ -561,15 +580,16 @@ def build_xy_binary_fall(
 
 
 def build_xy_binary_horizontal_from_final_falled(
-    videos: List[VideoSample],
-    BodyLandmark,
-    *,
-    pose_col: str,
-    window: int = 7,
-    falled_tail_frames: int = 6,
-    min_quality: float = 0.20,
-    min_good_keypoints: int = 4,
-    within_fall_only: bool = True,
+        videos: List[VideoSample],
+        BodyLandmark,
+        *,
+        pose_col: str,
+        window: int = 7,
+        falled_tail_frames: int = 6,
+        min_quality: float = 0.20,
+        min_good_keypoints: int = 4,
+        within_fall_only: bool = True,
+        min_window_quality: float = 0.0,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     X_all, y_all, g_all, w_all = [], [], [], []
 
@@ -590,7 +610,11 @@ def build_xy_binary_horizontal_from_final_falled(
         def flush():
             nonlocal feats_seg, cls_seg, q_seg
             if len(feats_seg) >= window:
-                Xw, yw, ww = windowize_last_label(feats_seg, cls_seg, q_seg, window=window)
+                Xw, yw, ww = windowize_last_label(
+                    feats_seg, cls_seg, q_seg,
+                    window=window,
+                    min_window_quality=min_window_quality
+                )
                 if len(Xw) > 0:
                     X_all.append(Xw)
                     y_all.append(yw)
@@ -637,7 +661,7 @@ def build_xy_binary_horizontal_from_final_falled(
         flush()
 
     if not X_all:
-        raise ValueError("No samples for HORIZONTAL model. Lower thresholds/window or increase tail frames.")
+        raise ValueError("No samples for HORIZONTAL model. Lower thresholds/window/quality or increase tail frames.")
 
     X = np.vstack(X_all).astype(np.float32)
     y = np.concatenate(y_all).astype(np.int32)
@@ -647,16 +671,16 @@ def build_xy_binary_horizontal_from_final_falled(
 
 
 def _fit_search(
-    base: Pipeline,
-    param_dist: Dict[str, Any],
-    X_train: np.ndarray,
-    y_train: np.ndarray,
-    groups_train: np.ndarray,
-    *,
-    sample_weight: Optional[np.ndarray],
-    scoring: str,
-    n_iter: int,
-    random_state: int,
+        base: Pipeline,
+        param_dist: Dict[str, Any],
+        X_train: np.ndarray,
+        y_train: np.ndarray,
+        groups_train: np.ndarray,
+        *,
+        sample_weight: Optional[np.ndarray],
+        scoring: str,
+        n_iter: int,
+        random_state: int,
 ) -> Pipeline:
     cv = GroupKFold(n_splits=5)
     search = RandomizedSearchCV(
@@ -678,21 +702,24 @@ def _fit_search(
 
 
 def train_binary_model_random_search_best_of_two(
-    X: np.ndarray,
-    y: np.ndarray,
-    groups: np.ndarray,
-    quality_w: np.ndarray,
-    *,
-    random_state: int,
-    test_size: float = 0.2,
-    max_majority_ratio: float = 2.5,
-    n_iter_search: int = 30,
-    scoring: str = "f1",
+        X: np.ndarray,
+        y: np.ndarray,
+        groups: np.ndarray,
+        quality_w: np.ndarray,
+        *,
+        random_state: int,
+        test_size: float = 0.2,
+        max_majority_ratio: float = 2.5,
+        n_iter_search: int = 30,
+        scoring: str = "f1",
 ) -> Pipeline:
     tr, te = _pick_split_binary(X, y, groups, test_size=test_size, random_state=random_state)
 
     X_train, y_train, g_train, q_train = X[tr], y[tr], groups[tr], quality_w[tr]
     X_test, y_test = X[te], y[te]
+
+    if len(X_train) == 0:
+        raise ValueError("Training set is empty. Reduce window size, relax quality thresholds, or add more data.")
 
     maj_label = 0 if np.sum(y_train == 0) >= np.sum(y_train == 1) else 1
     X_train, y_train, q_train, g_train = _downsample_majority(
@@ -721,7 +748,7 @@ def train_binary_model_random_search_best_of_two(
         "clf__activation": ["relu", "tanh"],
         "clf__alpha": [1e-5, 1e-4, 1e-3, 1e-2],
         "clf__learning_rate_init": [1e-4, 3e-4, 1e-3, 3e-3],
-        "clf__batch_size": [64, 128, 256],
+        "clf__batch_size": ["auto", 32],
         "clf__max_iter": [300, 500, 700],
     }
 
@@ -768,25 +795,34 @@ def train_binary_model_random_search_best_of_two(
 
 
 def train_and_save_models(
-    dataset_obj: Any,
-    BodyLandmark,
-    *,
-    save_path: str = "./data/icaro_models.joblib",
-    use_world: bool = False,
-    window: int = 7,
-    margin: int = 6,
-    falled_tail_frames: int = 6,
-    horizontal_min_quality: float = 0.20,
-    horizontal_min_good_keypoints: int = 4,
-    fall_min_vis_point: float = 0.55,
-    fall_min_pres_point: float = 0.55,
-    fall_min_required_core_points: int = 3,
-    within_fall_only_for_horizontal: bool = True,
-    random_state: int = 42,
-    n_iter_search: int = 30,
+        dataset_obj: Any,
+        BodyLandmark,
+        *,
+        save_path: str = "./data/icaro_models.joblib",
+        use_world: bool = False,
+        window: int = 7,
+        margin: int = 6,
+        falled_tail_frames: int = 6,
+        horizontal_min_quality: float = 0.20,
+        horizontal_min_good_keypoints: int = 4,
+        fall_min_vis_point: float = 0.55,
+        fall_min_pres_point: float = 0.55,
+        fall_min_required_core_points: int = 3,
+        within_fall_only_for_horizontal: bool = True,
+        min_window_quality: Union[float, str] = "medium",
+        random_state: int = 42,
+        n_iter_search: int = 30,
 ) -> Dict[str, Any]:
     videos = load_dataset_from_json_obj(dataset_obj)
     pose_col = "pose_world_landmarks" if use_world else "pose_landmarks"
+
+    quality_levels = {"low": 0.60, "medium": 0.80, "high": 0.95}
+    if isinstance(min_window_quality, str):
+        resolved_window_quality = quality_levels.get(min_window_quality.lower(), 0.80)
+    else:
+        resolved_window_quality = float(min_window_quality)
+
+    logging.info(f"Using min_window_quality: {resolved_window_quality} (Input: {min_window_quality})")
 
     Xf, yf, gf, wf = build_xy_binary_fall(
         videos,
@@ -797,6 +833,7 @@ def train_and_save_models(
         min_vis_point=fall_min_vis_point,
         min_pres_point=fall_min_pres_point,
         min_required_core_points=fall_min_required_core_points,
+        min_window_quality=resolved_window_quality,
     )
     logging.info(f"FALL support: {np.bincount(yf, minlength=2)}")
     fall_model = train_binary_model_random_search_best_of_two(
@@ -815,6 +852,7 @@ def train_and_save_models(
         min_quality=horizontal_min_quality,
         min_good_keypoints=horizontal_min_good_keypoints,
         within_fall_only=within_fall_only_for_horizontal,
+        min_window_quality=resolved_window_quality,
     )
     logging.info(f"HORIZONTAL support: {np.bincount(yh, minlength=2)}")
     horizontal_model = train_binary_model_random_search_best_of_two(
@@ -839,6 +877,7 @@ def train_and_save_models(
             "fall_min_pres_point": fall_min_pres_point,
             "fall_min_required_core_points": fall_min_required_core_points,
             "within_fall_only_for_horizontal": within_fall_only_for_horizontal,
+            "min_window_quality": resolved_window_quality,
         },
     }
     joblib.dump(bundle, save_path)
@@ -863,7 +902,7 @@ def _proba_pos(model: Pipeline, X: np.ndarray) -> float:
 
 if __name__ == "__main__":
     dataset_obj = json.loads(open("../data/archive.json", "r", encoding="utf-8").read())
-    from util_landmarks import BodyLandmark
+
 
     bundle = train_and_save_models(
         dataset_obj,
@@ -873,12 +912,13 @@ if __name__ == "__main__":
         window=7,
         margin=6,
         falled_tail_frames=7,
-        horizontal_min_quality=0.40,
+        horizontal_min_quality=0.50,
         horizontal_min_good_keypoints=4,
-        fall_min_vis_point=0.55,
-        fall_min_pres_point=0.55,
-        fall_min_required_core_points=3,
+        fall_min_vis_point=0.70,
+        fall_min_pres_point=0.70,
+        fall_min_required_core_points=5,
         within_fall_only_for_horizontal=True,
         random_state=42,
         n_iter_search=40,
+        min_window_quality="high",
     )
