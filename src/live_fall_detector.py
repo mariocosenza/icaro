@@ -19,17 +19,17 @@ class LiveManDownDetector:
         window: int,
 
 
-        fall_min_vis_point: float = 0.65,
-        fall_min_pres_point: float = 0.65,
-        fall_min_required_core_points: int = 3,
+        fall_min_vis_point: float = 0.75,
+        fall_min_pres_point: float = 0.75,
+        fall_min_required_core_points: int = 4,
 
-        horizontal_min_quality: float = 0.65,
-        horizontal_min_good_keypoints: int = 4,
+        horizontal_min_quality: float = 0.75,
+        horizontal_min_good_keypoints: int = 5,
 
-        min_window_quality: float = 0.65,
+        min_window_quality: float = 0.80,
 
-        fall_threshold: float = 0.60,
-        horizontal_threshold: float = 0.60,
+        fall_threshold: float = 0.70,
+        horizontal_threshold: float = 0.70,
         consecutive_fall: int = 3,
         consecutive_horizontal: int = 3,
         reset_on_invalid: bool = False,
@@ -160,7 +160,6 @@ class LiveManDownDetector:
 
         if fall_event:
             if len(self._h_feat_buf) >= self.window:
-                # --- NEW: also gate horizontal prediction on its window quality ---
                 horiz_q = self._window_quality(self._h_q_buf)
                 if horiz_q >= self.min_window_quality:
                     Wh = np.stack(list(self._h_feat_buf), axis=0)
