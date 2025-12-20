@@ -1,12 +1,19 @@
 from fastapi import FastAPI, logger
 from mediapipe.tasks.python import vision
+from starlette.middleware.cors import CORSMiddleware
 
 from mongodb import get_all_data_from_mongo_db
 from pose_landmark import main
 from push_notification import LatestHeartbeat
 
 app = FastAPI()
-main(vision.RunningMode.LIVE_STREAM, quality="high")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1|192\.168\.1\.(?:[0-9]{1,3}))(?::\d+)?$",
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 @app.get("/api/v1/alerts")
 def get_alerts():
     return get_all_data_from_mongo_db()
@@ -15,3 +22,6 @@ def get_alerts():
 def post_heartbeat(heartbeat: int):
     LatestHeartbeat.BPM = heartbeat
     logger.logger.log(level=logger.logger.INFO, msg=f"Heartbeat: {heartbeat}")
+
+if __name__ == "__main__":
+    main(path='../data/images/video (10).avi', running_mode=vision.RunningMode.VIDEO, quality="high")
