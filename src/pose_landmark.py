@@ -70,6 +70,7 @@ def pose_stream(
                 timestamp_ms = int(1000.0 * frame_index / fps)
 
             result = detector.detect_for_video(mp_image, timestamp_ms)
+            classify_live(result, mp_image, timestamp_ms)
 
             if visualize:
                 from drawing import draw_pose_points
@@ -87,7 +88,6 @@ def pose_stream(
 
     cap.release()
     return pd.DataFrame(rows)
-
 
 
 def pose_point(path: str, running_mode: vision.RunningMode, webcam: bool = True):
@@ -119,7 +119,7 @@ def pose_point(path: str, running_mode: vision.RunningMode, webcam: bool = True)
 
     return pose_stream(path, detector, running_mode=running_mode, webcam=webcam)
 
-def main(running_mode: vision.RunningMode):
+def main(running_mode: vision.RunningMode, path:str=""):
     if running_mode == vision.RunningMode.LIVE_STREAM:
         if GroundCoordinates.X == 0 and GroundCoordinates.Y == 0 and GroundCoordinates.Z == 0:
             try:
@@ -131,10 +131,11 @@ def main(running_mode: vision.RunningMode):
                 logging.info(f'Loaded ground coordinates X {GroundCoordinates.X} Y {GroundCoordinates.Y} Z {GroundCoordinates.Z}')
             except FileNotFoundError:
                 calibrate_ground_for_stream("", webcam=True)
-            pose_point("./data/images/video (10).avi", vision.RunningMode.LIVE_STREAM, webcam=True)
+            pose_point("", vision.RunningMode.LIVE_STREAM, webcam=True)
     else:
-        pose_point("./data/images/video (10).avi", vision.RunningMode.VIDEO, webcam=False)
+        pose_point(path, vision.RunningMode.VIDEO, webcam=False)
 
 
 if __name__ == "__main__":
-    main(vision.RunningMode.LIVE_STREAM)
+    #DEMO
+    main(vision.RunningMode.VIDEO, path="../data/images/video (10).avi")
