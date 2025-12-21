@@ -23,5 +23,6 @@ def post_heartbeat(heartbeat: int):
     LatestHeartbeat.BPM = heartbeat
     logger.logger.log(level=logger.logger.INFO, msg=f"Heartbeat: {heartbeat}")
 
+main(path='', running_mode=vision.RunningMode.LIVE_STREAM, quality="high")
 if __name__ == "__main__":
-    main(path='../data/images/video (10).avi', running_mode=vision.RunningMode.VIDEO, quality="high")
+    main(path='', running_mode=vision.RunningMode.LIVE_STREAM, quality="high")

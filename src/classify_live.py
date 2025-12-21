@@ -66,6 +66,7 @@ def classify_live(result: PoseLandmarkerResult, image: mp.Image, timestamp_ms: i
             asyncio.run(send_push_notification('Man Down Detected', 'A man is down please check your app!'))
             asyncio.run(insert_message_mongo_db("Man Down Detected", "Man down detected at timestamp: " + str(timestamp_ms) + "ms", alert=True))
             logging.info(f"[{timestamp_ms}ms] MAN DOWN (HORIZONTAL) prob={out['horizontal_prob']:.3f} hits={out['horizontal_hits']}")
+            DETECTOR_ENABLED = False
 
     if out["fall_event"]:
         logging.info(f"[{timestamp_ms}ms] FALL prob={out['fall_prob']:.3f} hits={out['fall_hits']}")
@@ -91,9 +92,9 @@ _detector = LiveManDownDetector(
         fall_min_required_core_points=bundle["cfg"]["fall_min_required_core_points"],
         horizontal_min_quality=bundle["cfg"]["horizontal_min_quality"],
         horizontal_min_good_keypoints=bundle["cfg"]["horizontal_min_good_keypoints"],
-        fall_threshold=0.60,
+        fall_threshold=0.70,
         horizontal_threshold=0.60,
-        consecutive_fall=3,
+        consecutive_fall=5,
         consecutive_horizontal=3,
         reset_on_invalid=False,
         min_window_quality="high"
