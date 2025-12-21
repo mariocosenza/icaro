@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "523706652800",
+    "project_id": "icaro-3fbd9",
+    "storage_bucket": "icaro-3fbd9.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:523706652800:android:d07243cf6299038ecb2e65",
+        "android_client_info": {
+          "package_name": "com.example.icaro"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCFGF64hGiSjL1Nde6Ip7Yz4dZSJr4sxQo"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:523706652800:android:54f835fcd7d8174fcb2e65",
+        "android_client_info": {
+          "package_name": "it.unisa.icaro"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCFGF64hGiSjL1Nde6Ip7Yz4dZSJr4sxQo"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

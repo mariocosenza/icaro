@@ -51,7 +51,30 @@ class AlertItem {
     required this.alert,
   });
 
-  factory AlertItem.fromJson(String id, Map<String, dynamic> json) {
+  static String _parseMongoId(dynamic raw) {
+    if (raw == null) return '';
+
+    // Typical extended JSON serialization: {"$oid":"6946..."}
+    if (raw is Map<String, dynamic>) {
+      final oid = raw[r'$oid'];
+      if (oid != null) return oid.toString();
+    }
+
+    // Otherwise: string, int, etc.
+    return raw.toString();
+  }
+
+  factory AlertItem.fromDoc(Map<String, dynamic> json) {
+    return AlertItem(
+      id: _parseMongoId(json['_id']),
+      title: (json['title'] ?? '').toString(),
+      message: (json['message'] ?? '').toString(),
+      alert: (json['alert'] == true),
+    );
+  }
+
+  // Backward compatibility with your previous { "0": {...} } format
+  factory AlertItem.fromKeyedJson(String id, Map<String, dynamic> json) {
     return AlertItem(
       id: id,
       title: (json['title'] ?? '').toString(),
@@ -69,7 +92,7 @@ class AlertsPage extends StatefulWidget {
 }
 
 class _AlertsPageState extends State<AlertsPage> {
-  static const String endpoint = "http://192.168.1.15:8000/api/v1/allerts";
+  static const String endpoint = "http://192.168.1.15:8000/api/v1/alerts";
 
   bool _loading = true;
   String? _error;
@@ -88,10 +111,8 @@ class _AlertsPageState extends State<AlertsPage> {
       await Permission.notification.request();
     }
 
-    // Subscribe to topic "fall"
     await FirebaseMessaging.instance.subscribeToTopic("fall");
 
-    // (Optional) handle notifications while app is open
     FirebaseMessaging.onMessage.listen((RemoteMessage message) {
       final title = message.notification?.title ?? "Notification";
       final body = message.notification?.body ?? "";
@@ -117,25 +138,45 @@ class _AlertsPageState extends State<AlertsPage> {
 
       final decoded = jsonDecode(res.body);
 
-      if (decoded is! Map<String, dynamic>) {
-        throw Exception("Unexpected JSON format (expected object/map).");
-      }
-
-
-      final entries = decoded.entries.toList();
-
-      entries.sort((a, b) {
-        final ai = int.tryParse(a.key) ?? 0;
-        final bi = int.tryParse(b.key) ?? 0;
-        return ai.compareTo(bi);
-      });
-
       final items = <AlertItem>[];
-      for (final e in entries) {
-        final v = e.value;
-        if (v is Map<String, dynamic>) {
-          items.add(AlertItem.fromJson(e.key, v));
+
+      if (decoded is Map<String, dynamic>) {
+        final rawAlerts = decoded['alerts'];
+
+        if (rawAlerts is List) {
+          for (final el in rawAlerts) {
+            if (el is Map<String, dynamic>) {
+              items.add(AlertItem.fromDoc(el));
+            }
+          }
+          items.sort((a, b) => a.id.compareTo(b.id));
         }
+        else {
+          final entries = decoded.entries.toList();
+          entries.sort((a, b) {
+            final ai = int.tryParse(a.key) ?? 0;
+            final bi = int.tryParse(b.key) ?? 0;
+            return ai.compareTo(bi);
+          });
+
+          for (final e in entries) {
+            final v = e.value;
+            if (v is Map<String, dynamic>) {
+              items.add(AlertItem.fromKeyedJson(e.key, v));
+            }
+          }
+        }
+      }
+      // Legacy format: [ {...}, {...} ]
+      else if (decoded is List) {
+        for (final el in decoded) {
+          if (el is Map<String, dynamic>) {
+            items.add(AlertItem.fromDoc(el));
+          }
+        }
+        items.sort((a, b) => a.id.compareTo(b.id));
+      } else {
+        throw Exception("Unexpected JSON format (expected map or list).");
       }
 
       setState(() {
@@ -190,7 +231,9 @@ class _AlertsPageState extends State<AlertsPage> {
 
                       return ListTile(
                         leading: Icon(icon),
-                        title: Text(item.title.isEmpty ? "(no title)" : item.title),
+                        title: Text(
+                          item.title.isEmpty ? "(no title)" : item.title,
+                        ),
                         subtitle: Text(item.message),
                       );
                     },
