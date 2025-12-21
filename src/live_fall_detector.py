@@ -20,8 +20,8 @@ class LiveManDownDetector:
             horizontal_model: Pipeline,
             window: int,
 
-            fall_min_vis_point: float = 0.70,
-            fall_min_pres_point: float = 0.70,
+            fall_min_vis_point: float = 0.80,
+            fall_min_pres_point: float = 0.80,
             fall_min_required_core_points: int = 5,
 
             horizontal_min_quality: float = 0.65,
@@ -31,10 +31,10 @@ class LiveManDownDetector:
 
             fall_threshold: float = 0.80,
             horizontal_threshold: float = 0.70,
-            consecutive_fall: int = 4,
+            consecutive_fall: int = 5,
             consecutive_horizontal: int = 4,
 
-            post_fall_duration: int = 40,
+            post_fall_duration: int = 60,
             reset_on_invalid: bool = False,
     ):
         self.BodyLandmark = BodyLandmark
