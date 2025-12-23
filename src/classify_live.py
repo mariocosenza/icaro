@@ -5,6 +5,7 @@ from drawing import draw_pose_points
 from mongodb import insert_message_mongo_db
 from push_notification import send_push_notification
 from push_notification import LatestHeartbeat, send_push_notification_heartbeat
+from push_notification import LatestMovement, send_monitoring_notification
 from util_landmarks import GroundCoordinates
 from util_landmarks import BodyLandmark
 from mediapipe.tasks.python.vision.pose_landmarker import PoseLandmarkerResult
@@ -44,7 +45,7 @@ def classify_live(result: PoseLandmarkerResult, image: mp.Image, timestamp_ms: i
         return
 
     if not DETECTOR_ENABLED:
-        if LatestHeartbeat.NOTIED_FALL == False and LatestHeartbeat.BPM < 60:
+        if LatestHeartbeat.NOTIED_FALL == False and (LatestHeartbeat.BPM < 30 or LatestHeartbeat.BPM > 180):
             LatestHeartbeat.NOTIED_FALL = True
             asyncio.run(send_push_notification_heartbeat())
         if timestamp_ms >= DETECTOR_DISABLED_UNTIL_MS and result.pose_landmarks[0] and result.pose_landmarks[0][BodyLandmark.LEFT_SHOULDER].y > GroundCoordinates.Y:
@@ -63,17 +64,19 @@ def classify_live(result: PoseLandmarkerResult, image: mp.Image, timestamp_ms: i
 
     if out["horizontal_event"]:
         if out['horizontal_prob'] > 0.70:
-            asyncio.run(send_push_notification('Man Down Detected', 'A man is down please check your app!'))
-            asyncio.run(insert_message_mongo_db("Man Down Detected", "Man down detected at timestamp: " + str(timestamp_ms) + "ms", alert=True))
-            logging.info(f"[{timestamp_ms}ms] MAN DOWN (HORIZONTAL) prob={out['horizontal_prob']:.3f} hits={out['horizontal_hits']}")
-            DETECTOR_ENABLED = False
+            if not LatestHeartbeat.NOTIED_FALL:
+                asyncio.run(send_monitoring_notification())
+            if LatestMovement.X < 0.4 and LatestMovement.Y < 0.4 and LatestMovement.Z < 0.4:
+                asyncio.run(send_push_notification('Man Down Detected', 'A man is down please check your app!'))
+                asyncio.run(insert_message_mongo_db("Man Down Detected", "Man down detected at timestamp: " + str(timestamp_ms) + "ms", alert=True))
+                logging.info(f"[{timestamp_ms}ms] MAN DOWN (HORIZONTAL) prob={out['horizontal_prob']:.3f} hits={out['horizontal_hits']}")
+                DETECTOR_ENABLED = False
 
     if out["fall_event"]:
         logging.info(f"[{timestamp_ms}ms] FALL prob={out['fall_prob']:.3f} hits={out['fall_hits']}")
         if out['fall_prob'] > 0.98:
             asyncio.run(send_push_notification('Man Fall Detected', 'A fall was detected please check your app!'))
             asyncio.run(insert_message_mongo_db("Fall Detected", "Fall detected at timestamp: " + str(timestamp_ms) + "ms", alert=True))
-
             DETECTOR_ENABLED = False
             DETECTOR_DISABLED_UNTIL_MS = timestamp_ms + INHIBIT_MS
             logging.info(f"[{timestamp_ms}ms] DETECTOR INHIBITED until {DETECTOR_DISABLED_UNTIL_MS}ms")
