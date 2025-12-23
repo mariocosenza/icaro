@@ -5,6 +5,7 @@ from starlette.middleware.cors import CORSMiddleware
 from mongodb import get_all_data_from_mongo_db
 from pose_landmark import main
 from push_notification import LatestHeartbeat
+from src.push_notification import LatestMovement
 
 app = FastAPI()
 app.add_middleware(
@@ -22,6 +23,13 @@ def get_alerts():
 def post_heartbeat(heartbeat: int):
     LatestHeartbeat.BPM = heartbeat
     logger.logger.log(level=logger.logger.INFO, msg=f"Heartbeat: {heartbeat}")
+
+@app.post("/api/v1/monitor/{x}-{y}-{z}")
+def post_heartbeat(x: float, y: float, z: float):
+    LatestMovement.X = x
+    LatestMovement.Y = y
+    LatestMovement.Z = z
+    logger.logger.log(level=logger.logger.INFO, msg=f"Movement: {x}-{y}-{z}")
 
 main(path='', running_mode=vision.RunningMode.LIVE_STREAM, quality="high")
 if __name__ == "__main__":
