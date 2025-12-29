@@ -44,25 +44,57 @@ class AlertItem {
   final String title;
   final String message;
   final bool alert;
+  final DateTime timestamp;
 
   AlertItem({
     required this.id,
     required this.title,
     required this.message,
     required this.alert,
+    required this.timestamp,
   });
 
   static String _parseMongoId(dynamic raw) {
     if (raw == null) return '';
 
-    // Typical extended JSON serialization: {"$oid":"6946..."}
     if (raw is Map<String, dynamic>) {
       final oid = raw[r'$oid'];
       if (oid != null) return oid.toString();
     }
 
-    // Otherwise: string, int, etc.
     return raw.toString();
+  }
+
+  static DateTime _parseTimestamp(dynamic raw) {
+    if (raw == null) return DateTime.fromMillisecondsSinceEpoch(0);
+
+    if (raw is String) {
+      final dt = DateTime.tryParse(raw);
+      if (dt != null) return dt;
+      return DateTime.fromMillisecondsSinceEpoch(0);
+    }
+
+    if (raw is int) {
+      if (raw.abs() >= 1000000000000) {
+        return DateTime.fromMillisecondsSinceEpoch(raw);
+      }
+      return DateTime.fromMillisecondsSinceEpoch(raw * 1000);
+    }
+
+    if (raw is Map<String, dynamic>) {
+      final dateVal = raw[r'$date'];
+      if (dateVal is String) {
+        final dt = DateTime.tryParse(dateVal);
+        if (dt != null) return dt;
+      }
+      if (dateVal is Map<String, dynamic>) {
+        final nl = dateVal[r'$numberLong'];
+        final ms = int.tryParse(nl?.toString() ?? '');
+        if (ms != null) return DateTime.fromMillisecondsSinceEpoch(ms);
+      }
+    }
+
+    return DateTime.fromMillisecondsSinceEpoch(0);
   }
 
   factory AlertItem.fromDoc(Map<String, dynamic> json) {
@@ -71,6 +103,7 @@ class AlertItem {
       title: (json['title'] ?? '').toString(),
       message: (json['message'] ?? '').toString(),
       alert: (json['alert'] == true),
+      timestamp: _parseTimestamp(json['timestamp']),
     );
   }
 
@@ -81,6 +114,7 @@ class AlertItem {
       title: (json['title'] ?? '').toString(),
       message: (json['message'] ?? '').toString(),
       alert: (json['alert'] == true),
+      timestamp: _parseTimestamp(json['timestamp']),
     );
   }
 }
@@ -138,21 +172,22 @@ class _AlertsPageState extends State<AlertsPage> {
       }
 
       final decoded = jsonDecode(res.body);
-
       final items = <AlertItem>[];
 
       if (decoded is Map<String, dynamic>) {
         final rawAlerts = decoded['alerts'];
 
+        // Preferred server response: {"alerts":[{...},{...}]}
         if (rawAlerts is List) {
           for (final el in rawAlerts) {
             if (el is Map<String, dynamic>) {
               items.add(AlertItem.fromDoc(el));
             }
           }
-          items.sort((a, b) => a.id.compareTo(b.id));
-        }
-        else {
+          // Sort by latest timestamp first
+          items.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+        } else {
+          // Legacy keyed map response: {"0": {...}, "1": {...}}
           final entries = decoded.entries.toList();
           entries.sort((a, b) {
             final ai = int.tryParse(a.key) ?? 0;
@@ -166,6 +201,8 @@ class _AlertsPageState extends State<AlertsPage> {
               items.add(AlertItem.fromKeyedJson(e.key, v));
             }
           }
+          // Sort by latest timestamp first
+          items.sort((a, b) => b.timestamp.compareTo(a.timestamp));
         }
       }
       // Legacy format: [ {...}, {...} ]
@@ -175,7 +212,8 @@ class _AlertsPageState extends State<AlertsPage> {
             items.add(AlertItem.fromDoc(el));
           }
         }
-        items.sort((a, b) => a.id.compareTo(b.id));
+        // Sort by latest timestamp first
+        items.sort((a, b) => b.timestamp.compareTo(a.timestamp));
       } else {
         throw Exception("Unexpected JSON format (expected map or list).");
       }
