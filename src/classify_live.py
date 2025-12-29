@@ -1,21 +1,44 @@
 import asyncio
 import logging
+from datetime import datetime
+
 import mediapipe as mp
-from drawing import draw_pose_points
-from mongodb import insert_message_mongo_db
-from push_notification import send_push_notification
-from push_notification import LatestHeartbeat, send_push_notification_heartbeat
-from util_landmarks import GroundCoordinates
-from util_landmarks import BodyLandmark
 from mediapipe.tasks.python.vision.pose_landmarker import PoseLandmarkerResult
+
+from drawing import draw_pose_points
 from live_fall_detector import LiveManDownDetector
+from mongodb import insert_message_mongo_db
 from pipeline_horizontal_classification import load_models
+from push_notification import (
+    LatestHeartbeat,
+    LatestMovement,
+    send_monitoring_notification,
+    send_push_notification,
+    send_push_notification_heartbeat,
+)
+from util_landmarks import BodyLandmark, GroundCoordinates
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+log = logging.getLogger(__name__)
 
-DETECTOR_ENABLED = True
 INHIBIT_MS = 120_000
-DETECTOR_DISABLED_UNTIL_MS = 0
+
+_detector_enabled = True
+_detector_disabled_until_ms = 0
+
+_loop: asyncio.AbstractEventLoop | None = None
+
+
+def set_main_loop(loop: asyncio.AbstractEventLoop) -> None:
+    global _loop
+    _loop = loop
+
+
+def _schedule(coro) -> None:
+    if _loop is None:
+        return
+    _loop.call_soon_threadsafe(asyncio.create_task, coro)
+
 
 def _lm_to_dict(lm) -> dict:
     return {
@@ -26,76 +49,148 @@ def _lm_to_dict(lm) -> dict:
         "presence": float(getattr(lm, "presence", 0.0)),
     }
 
+
 def _result_to_frame_landmarks(result: PoseLandmarkerResult):
-    if result is None or not result.pose_landmarks:
+    if not result or not result.pose_landmarks:
         return None
+
     poses = []
     for pose in result.pose_landmarks:
-        if pose is None or len(pose) < 33:
-            continue
-        poses.append([_lm_to_dict(lm) for lm in pose])
-    return poses if poses else None
+        if pose and len(pose) >= 33:
+            poses.append([_lm_to_dict(lm) for lm in pose])
+
+    return poses or None
+
+
+def _now_str() -> str:
+    return datetime.now().strftime("%A, %B %d, %Y %H:%M")
+
+
+def _is_no_movement() -> bool:
+    return (
+        LatestMovement.X < 0.5 and
+        LatestMovement.Y < 0.8 and
+        LatestMovement.Z < 0.8
+    )
+
+
+def _is_abnormal_hr() -> bool:
+    return LatestHeartbeat.BPM < 30 or LatestHeartbeat.BPM > 180
+
+
+def _can_reenable_detector(result: PoseLandmarkerResult, timestamp_ms: int) -> bool:
+    if timestamp_ms < _detector_disabled_until_ms:
+        return False
+    if not result.pose_landmarks or not result.pose_landmarks[0]:
+        return False
+    return result.pose_landmarks[0][BodyLandmark.LEFT_SHOULDER].y > GroundCoordinates.Y
+
+
+def _notify_mongo(title: str, body: str, alert: bool = True) -> None:
+    _schedule(insert_message_mongo_db(title, body, alert=alert))
+
+
+def _notify_push(title: str, body: str) -> None:
+    _schedule(send_push_notification(title, body))
+
+
+def _notify_monitoring() -> None:
+    _schedule(send_monitoring_notification())
+
+
+def _notify_heartbeat() -> None:
+    _schedule(send_push_notification_heartbeat())
+
 
 def classify_live(result: PoseLandmarkerResult, image: mp.Image, timestamp_ms: int) -> None:
+    global _detector_enabled, _detector_disabled_until_ms, _detector
+
     draw_pose_points(image, result, wait_ms=1)
 
-    global DETECTOR_ENABLED, DETECTOR_DISABLED_UNTIL_MS, _detector
     if _detector is None:
         return
 
-    if not DETECTOR_ENABLED:
-        if LatestHeartbeat.NOTIED_FALL == False and LatestHeartbeat.BPM < 60:
+    frame_landmarks = _result_to_frame_landmarks(result)
+    no_movement = _is_no_movement()
+    abnormal_hr = _is_abnormal_hr()
+
+    if not _detector_enabled:
+        if (not LatestHeartbeat.NOTIED_FALL) and abnormal_hr and no_movement:
             LatestHeartbeat.NOTIED_FALL = True
-            asyncio.run(send_push_notification_heartbeat())
-        if timestamp_ms >= DETECTOR_DISABLED_UNTIL_MS and result.pose_landmarks[0] and result.pose_landmarks[0][BodyLandmark.LEFT_SHOULDER].y > GroundCoordinates.Y:
-            DETECTOR_ENABLED = True
+            _notify_heartbeat()
+
+        if _can_reenable_detector(result, timestamp_ms):
+            _detector_enabled = True
             LatestHeartbeat.NOTIED_FALL = False
         else:
-            frame_landmarks = _result_to_frame_landmarks(result)
             _detector.update(frame_landmarks)
             return
 
-    frame_landmarks = _result_to_frame_landmarks(result)
     out = _detector.update(frame_landmarks)
-
     if not out.get("ready", False):
         return
 
-    if out["horizontal_event"]:
-        if out['horizontal_prob'] > 0.70:
-            asyncio.run(send_push_notification('Man Down Detected', 'A man is down please check your app!'))
-            asyncio.run(insert_message_mongo_db("Man Down Detected", "Man down detected at timestamp: " + str(timestamp_ms) + "ms", alert=True))
-            logging.info(f"[{timestamp_ms}ms] MAN DOWN (HORIZONTAL) prob={out['horizontal_prob']:.3f} hits={out['horizontal_hits']}")
-            DETECTOR_ENABLED = False
+    inhibited = False
 
-    if out["fall_event"]:
-        logging.info(f"[{timestamp_ms}ms] FALL prob={out['fall_prob']:.3f} hits={out['fall_hits']}")
-        if out['fall_prob'] > 0.98:
-            asyncio.run(send_push_notification('Man Fall Detected', 'A fall was detected please check your app!'))
-            asyncio.run(insert_message_mongo_db("Fall Detected", "Fall detected at timestamp: " + str(timestamp_ms) + "ms", alert=True))
+    horizontal_event = out.get("horizontal_event") and out.get("horizontal_prob", 0.0) > 0.70
+    fall_event = out.get("fall_event") and out.get("fall_prob", 0.0) > 0.98
 
-            DETECTOR_ENABLED = False
-            DETECTOR_DISABLED_UNTIL_MS = timestamp_ms + INHIBIT_MS
-            logging.info(f"[{timestamp_ms}ms] DETECTOR INHIBITED until {DETECTOR_DISABLED_UNTIL_MS}ms")
+    if horizontal_event:
+        if not LatestHeartbeat.NOTIED_FALL:
+            _notify_monitoring()
 
+        if abnormal_hr and no_movement:
+            _notify_push("Man Down Detected", "A man is down please check your app!")
+            _notify_mongo(
+                "Man Down Detected",
+                f"Man down detected at timestamp: {_now_str()}ms",
+                alert=True,
+            )
+            log.info(
+                f"[{timestamp_ms}ms] MAN DOWN (HORIZONTAL) prob={out.get('horizontal_prob', 0.0):.3f} "
+                f"hits={out.get('horizontal_hits', 0)}"
+            )
+            inhibited = True
+
+    if fall_event:
+        log.info(
+            f"[{timestamp_ms}ms] FALL prob={out.get('fall_prob', 0.0):.3f} hits={out.get('fall_hits', 0)}"
+        )
+        _notify_push("Man Fall Detected", "A fall was detected please check your app!")
+        _notify_mongo(
+            "Fall Detected",
+            f"Fall detected at timestamp: {_now_str()}ms",
+            alert=True,
+        )
+
+        if abnormal_hr:
+            LatestHeartbeat.NOTIED_FALL = True
+            _notify_heartbeat()
+
+        inhibited = True
+
+    if inhibited:
+        _detector_enabled = False
+        _detector_disabled_until_ms = int(timestamp_ms + INHIBIT_MS)
+        log.info(f"[{timestamp_ms}ms] DETECTOR INHIBITED until {_detector_disabled_until_ms}ms")
 
 
 bundle = load_models("../data/icaro_models.joblib")
 
 _detector = LiveManDownDetector(
-        BodyLandmark,
-        fall_model=bundle["fall_model"],
-        horizontal_model=bundle["horizontal_model"],
-        window=bundle["cfg"]["window"],
-        fall_min_vis_point=bundle["cfg"]["fall_min_vis_point"],
-        fall_min_pres_point=bundle["cfg"]["fall_min_pres_point"],
-        fall_min_required_core_points=bundle["cfg"]["fall_min_required_core_points"],
-        horizontal_min_quality=bundle["cfg"]["horizontal_min_quality"],
-        horizontal_min_good_keypoints=bundle["cfg"]["horizontal_min_good_keypoints"],
-        fall_threshold=0.70,
-        horizontal_threshold=0.60,
-        consecutive_fall=5,
-        consecutive_horizontal=3,
-        reset_on_invalid=False,
-        min_window_quality="high"
+    BodyLandmark,
+    fall_model=bundle["fall_model"],
+    horizontal_model=bundle["horizontal_model"],
+    window=bundle["cfg"]["window"],
+    fall_min_vis_point=bundle["cfg"]["fall_min_vis_point"],
+    fall_min_pres_point=bundle["cfg"]["fall_min_pres_point"],
+    fall_min_required_core_points=bundle["cfg"]["fall_min_required_core_points"],
+    horizontal_min_quality=bundle["cfg"]["horizontal_min_quality"],
+    horizontal_min_good_keypoints=bundle["cfg"]["horizontal_min_good_keypoints"],
+    fall_threshold=0.70,
+    horizontal_threshold=0.60,
+    consecutive_fall=5,
+    consecutive_horizontal=3,
+    reset_on_invalid=False,
+    min_window_quality="high",
 )
