@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import sys
+from datetime import datetime
 from typing import Any
 
 from pymongo import MongoClient
@@ -24,7 +25,8 @@ async def insert_message_mongo_db(title: str, message: str, alert: bool) -> None
     collection.insert_one({
         'title': title,
         'message': message,
-        'alert': alert
+        'alert': alert,
+        'timestamp': datetime.now()
     })
 
 
