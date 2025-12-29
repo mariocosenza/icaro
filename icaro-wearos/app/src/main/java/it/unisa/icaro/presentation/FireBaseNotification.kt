@@ -1,33 +1,26 @@
 package it.unisa.icaro.presentation
 
+import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
-import android.os.Build
 import android.os.VibrationEffect
-import android.os.Vibrator
 import android.os.VibratorManager
 import android.util.Log
+import androidx.annotation.RequiresPermission
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
 import kotlinx.coroutines.*
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import java.util.concurrent.TimeUnit
+import java.net.HttpURLConnection
+import java.net.URL
 
 class FirebaseNotificationService : FirebaseMessagingService() {
 
     private val serviceJob = SupervisorJob()
     private val serviceScope = CoroutineScope(serviceJob + Dispatchers.Default)
-
-    private val httpClient: OkHttpClient = OkHttpClient.Builder()
-        .callTimeout(5, TimeUnit.SECONDS)
-        .connectTimeout(3, TimeUnit.SECONDS)
-        .readTimeout(5, TimeUnit.SECONDS)
-        .build()
 
     override fun onMessageReceived(message: RemoteMessage) {
         super.onMessageReceived(message)
@@ -47,46 +40,36 @@ class FirebaseNotificationService : FirebaseMessagingService() {
         }
 
         serviceScope.launch {
-            measureAndSendHeartRateAndAccel(windowMs = 2000L)
+            // Increased timeout to allow sensor to wake up (60 seconds)
+            measureAndSendHeartRateAndAccel(timeoutMs = 60000L)
         }
     }
 
+    @RequiresPermission(Manifest.permission.VIBRATE)
     private fun vibrateOnce() {
         try {
-            val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                val vm = getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
-                vm.defaultVibrator
-            } else {
-                @Suppress("DEPRECATION")
-                getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
-            }
+            val vm = getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
+            val vibrator = vm.defaultVibrator
 
             if (!vibrator.hasVibrator()) return
 
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                vibrator.vibrate(VibrationEffect.createOneShot(250, VibrationEffect.DEFAULT_AMPLITUDE))
-            } else {
-                @Suppress("DEPRECATION")
-                vibrator.vibrate(250)
-            }
+            vibrator.vibrate(VibrationEffect.createOneShot(250, VibrationEffect.DEFAULT_AMPLITUDE))
         } catch (e: Exception) {
             Log.w("ICARO_SERVICE", "Vibration error", e)
         }
     }
 
-    private suspend fun measureAndSendHeartRateAndAccel(windowMs: Long) {
+    private suspend fun measureAndSendHeartRateAndAccel(timeoutMs: Long) {
         val sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
 
         val heartRateSensor = sensorManager.getDefaultSensor(Sensor.TYPE_HEART_RATE)
-        if (heartRateSensor == null) {
-            Log.e("ICARO_SERVICE", "No Heart Rate Sensor found")
-            return
-        }
-
         val accelSensor = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
-        if (accelSensor == null) {
-            Log.e("ICARO_SERVICE", "No Accelerometer Sensor found")
-            return
+        
+        if (heartRateSensor == null || accelSensor == null) {
+            Log.e("ICARO_SERVICE", "Sensors not found")
+             sendHeartRateToApi(0.0)
+             sendAccelToApi(0.0, 0.0, 0.0)
+             return
         }
 
         val hrReadings = mutableListOf<Float>()
@@ -94,13 +77,29 @@ class FirebaseNotificationService : FirebaseMessagingService() {
         val ayReadings = mutableListOf<Float>()
         val azReadings = mutableListOf<Float>()
 
+        // Used to signal when the first valid heart rate is received
+        val hrReceived = CompletableDeferred<Unit>()
+
         val listener = object : SensorEventListener {
             override fun onSensorChanged(event: SensorEvent) {
                 when (event.sensor.type) {
                     Sensor.TYPE_HEART_RATE -> {
                         if (event.values.isNotEmpty()) {
                             val v = event.values[0]
-                            if (v > 0f) hrReadings.add(v)
+                            if (v > 0f) {
+                                hrReadings.add(v)
+                                
+                                // Broadcast live heart rate
+                                val intent = Intent("HEART_RATE_UPDATE")
+                                intent.putExtra("heart_rate", v)
+                                intent.setPackage(packageName)
+                                sendBroadcast(intent)
+                                
+                                // Complete the deferred value to signal we have data
+                                if (hrReceived.isActive) {
+                                    hrReceived.complete(Unit)
+                                }
+                            }
                         }
                     }
                     Sensor.TYPE_ACCELEROMETER -> {
@@ -120,30 +119,37 @@ class FirebaseNotificationService : FirebaseMessagingService() {
             sensorManager.registerListener(listener, heartRateSensor, SensorManager.SENSOR_DELAY_NORMAL)
             sensorManager.registerListener(listener, accelSensor, SensorManager.SENSOR_DELAY_GAME)
 
-            delay(windowMs)
+            Log.d("ICARO_SERVICE", "Waiting for Heart Rate data (max ${timeoutMs}ms)...")
+            
+            // Wait until we get at least one valid HR reading or timeout
+            withTimeoutOrNull(timeoutMs) {
+                hrReceived.await()
+            }
+            
+            if (hrReadings.isNotEmpty()) {
+                Log.d("ICARO_SERVICE", "Heart Rate detected!")
+            } else {
+                 Log.w("ICARO_SERVICE", "Heart Rate sensor timed out.")
+            }
+
         } catch (e: Exception) {
             Log.e("ICARO_SERVICE", "Sensor collection error", e)
-            return
         } finally {
             sensorManager.unregisterListener(listener)
         }
 
-        val meanHr: Double? = hrReadings.takeIf { it.isNotEmpty() }?.average()
-        val meanAx: Double? = axReadings.takeIf { it.isNotEmpty() }?.average()
-        val meanAy: Double? = ayReadings.takeIf { it.isNotEmpty() }?.average()
-        val meanAz: Double? = azReadings.takeIf { it.isNotEmpty() }?.average()
+        val meanHr: Double = hrReadings.takeIf { it.isNotEmpty() }?.average() ?: 0.0
+        val meanAx: Double = axReadings.takeIf { it.isNotEmpty() }?.average() ?: 0.0
+        val meanAy: Double = ayReadings.takeIf { it.isNotEmpty() }?.average() ?: 0.0
+        val meanAz: Double = azReadings.takeIf { it.isNotEmpty() }?.average() ?: 0.0
 
-        if (meanHr != null) sendHeartRateToApi(meanHr) else Log.w("ICARO_SERVICE", "No heart rate data collected")
-        if (meanAx != null && meanAy != null && meanAz != null) {
-            sendAccelToApi(meanAx, meanAy, meanAz)
-        } else {
-            Log.w("ICARO_SERVICE", "No accelerometer data collected")
-        }
+        sendHeartRateToApi(meanHr)
+        sendAccelToApi(meanAx, meanAy, meanAz)
     }
 
     private suspend fun sendHeartRateToApi(meanHeartbeat: Double) = withContext(Dispatchers.IO) {
         val targetUrl = "http://192.168.1.15:8000/api/v1/measure/${meanHeartbeat.toInt()}"
-        doGet(targetUrl, tag = "ICARO_HEART")
+        doPost(targetUrl, tag = "ICARO_HEART")
     }
 
     private suspend fun sendAccelToApi(x: Double, y: Double, z: Double) = withContext(Dispatchers.IO) {
@@ -152,22 +158,36 @@ class FirebaseNotificationService : FirebaseMessagingService() {
         val fz = String.format(java.util.Locale.US, "%.3f", z)
 
         val targetUrl = "http://192.168.1.15:8000/api/v1/monitor/$fx-$fy-$fz"
-        doGet(targetUrl, tag = "ICARO_ACCEL")
+        doPost(targetUrl, tag = "ICARO_ACCEL")
     }
 
-    private fun doGet(url: String, tag: String) {
+    private fun doPost(url: String, tag: String) {
+        var connection: HttpURLConnection? = null
         try {
-            val request = Request.Builder().url(url).get().build()
-            httpClient.newCall(request).execute().use { response ->
-                val body = response.body?.string().orEmpty()
-                if (response.isSuccessful) {
-                    Log.d("ICARO_SERVICE", "[$tag] Success (${response.code}): $body")
-                } else {
-                    Log.e("ICARO_SERVICE", "[$tag] Failed (${response.code}): $body")
-                }
+            val urlObj = URL(url)
+            connection = urlObj.openConnection() as HttpURLConnection
+            connection.requestMethod = "POST"
+            // Set 30 seconds timeout
+            connection.connectTimeout = 30000
+            connection.readTimeout = 30000
+            
+            // Send empty body for POST as we are passing data in URL parameters
+            connection.doOutput = true
+            connection.setFixedLengthStreamingMode(0)
+
+            val responseCode = connection.responseCode
+            val inputStream = if (responseCode in 200..299) connection.inputStream else connection.errorStream
+            val body = inputStream?.bufferedReader()?.use { it.readText() } ?: ""
+
+            if (responseCode in 200..299) {
+                Log.d("ICARO_SERVICE", "[$tag] Success ($responseCode): $body")
+            } else {
+                Log.e("ICARO_SERVICE", "[$tag] Failed ($responseCode): $body")
             }
         } catch (e: Exception) {
             Log.e("ICARO_SERVICE", "[$tag] Network Error: $url", e)
+        } finally {
+            connection?.disconnect()
         }
     }
 
