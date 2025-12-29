@@ -8,7 +8,7 @@ cred = credentials.Certificate("../data/account/serviceAccountKey.json")
 firebase_admin.initialize_app(cred)
 
 class LatestHeartbeat:
-    BPM: int = 0
+    BPM: float = 20
     NOTIED_FALL: bool = False
 
 class LatestMovement:
