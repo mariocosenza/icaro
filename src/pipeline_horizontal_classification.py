@@ -3,11 +3,11 @@ import json
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
 import inspect
-# Make sure you have util_landmarks.py in the same folder
-from util_landmarks import BodyLandmark
 import numpy as np
 import pandas as pd
 import joblib
+
+from util_landmarks import BodyLandmark
 
 from sklearn.ensemble import HistGradientBoostingClassifier
 from sklearn.neural_network import MLPClassifier

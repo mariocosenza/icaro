@@ -72,6 +72,44 @@ def _mp_image_from_bgr(frame):
     return mp.Image(image_format=mp.ImageFormat.SRGB, data=frame_rgb)
 
 
+def _timestamp_live(start_time: float) -> int:
+    return int((time.time() - start_time) * 1000)
+
+
+def _timestamp_video(cap: cv2.VideoCapture, frame_index: int, fps: float) -> int:
+    pos_msec = cap.get(cv2.CAP_PROP_POS_MSEC)
+    if pos_msec and pos_msec > 0:
+        return int(pos_msec)
+    return int(1000.0 * frame_index / fps)
+
+
+async def _run_stream(
+    cap: cv2.VideoCapture,
+    stop_event: asyncio.Event,
+    target_width: Optional[int],
+    frame_stride: int,
+    process_frame,
+) -> None:
+    frame_index = 0
+    while cap.isOpened() and not stop_event.is_set():
+        ret, frame = cap.read()
+        if not ret or frame is None:
+            break
+
+        if frame_stride > 1 and (frame_index % frame_stride) != 0:
+            frame_index += 1
+            await asyncio.sleep(0)
+            continue
+
+        resized = _resize_frame(frame, target_width)
+        mp_image = _mp_image_from_bgr(resized)
+
+        process_frame(mp_image, frame_index)
+
+        frame_index += 1
+        await asyncio.sleep(0)
+
+
 def _ensure_ground_calibrated() -> None:
     if GroundCoordinates.X != 0 or GroundCoordinates.Y != 0 or GroundCoordinates.Z != 0:
         return
@@ -92,15 +130,15 @@ def _ensure_ground_calibrated() -> None:
 def _make_detector(cfg: PoseConfig, running_mode: vision.RunningMode):
     base_options = python.BaseOptions(model_asset_path=cfg.model_path)
 
-    common = dict(
-        base_options=base_options,
-        running_mode=running_mode,
-        output_segmentation_masks=cfg.output_segmentation_masks,
-        num_poses=cfg.num_poses,
-        min_pose_detection_confidence=cfg.min_pose_detection_confidence,
-        min_pose_presence_confidence=cfg.min_pose_presence_confidence,
-        min_tracking_confidence=cfg.min_tracking_confidence,
-    )
+    common = {
+        "base_options": base_options,
+        "running_mode": running_mode,
+        "output_segmentation_masks": cfg.output_segmentation_masks,
+        "num_poses": cfg.num_poses,
+        "min_pose_detection_confidence": cfg.min_pose_detection_confidence,
+        "min_pose_presence_confidence": cfg.min_pose_presence_confidence,
+        "min_tracking_confidence": cfg.min_tracking_confidence,
+    }
 
     if running_mode == vision.RunningMode.LIVE_STREAM:
         return vision.PoseLandmarker.create_from_options(
@@ -221,7 +259,8 @@ async def run_pose_async(
     if webcam is None:
         webcam = (running_mode == vision.RunningMode.LIVE_STREAM)
 
-    if running_mode == vision.RunningMode.LIVE_STREAM:
+    live_mode = running_mode == vision.RunningMode.LIVE_STREAM
+    if live_mode:
         _ensure_ground_calibrated()
 
     detector = _make_detector(cfg, running_mode)
@@ -229,35 +268,18 @@ async def run_pose_async(
     fps = _get_fps(cap)
     target_width = _resolve_width(quality)
 
-    frame_index = 0
-    t0 = time.time()
+    start_time = time.time()
+
+    def _process_frame(mp_image: mp.Image, idx: int) -> None:
+        if live_mode:
+            detector.detect_async(mp_image, _timestamp_live(start_time))
+            return
+        ts = _timestamp_video(cap, idx, fps)
+        result = detector.detect_for_video(mp_image, ts)
+        classify_live(result, mp_image, ts)
 
     try:
-        while cap.isOpened() and not stop_event.is_set():
-            ret, frame = cap.read()
-            if not ret or frame is None:
-                break
-
-            if frame_stride > 1 and (frame_index % frame_stride) != 0:
-                frame_index += 1
-                await asyncio.sleep(0)
-                continue
-
-            frame = _resize_frame(frame, target_width)
-            mp_image = _mp_image_from_bgr(frame)
-
-            if running_mode == vision.RunningMode.LIVE_STREAM:
-                timestamp_ms = int((time.time() - t0) * 1000)
-                detector.detect_async(mp_image, timestamp_ms)
-            else:
-                pos_msec = cap.get(cv2.CAP_PROP_POS_MSEC)
-                timestamp_ms = int(pos_msec) if pos_msec and pos_msec > 0 else int(1000.0 * frame_index / fps)
-
-                result = detector.detect_for_video(mp_image, timestamp_ms)
-                classify_live(result, mp_image, timestamp_ms)
-
-            frame_index += 1
-            await asyncio.sleep(0)
+        await _run_stream(cap, stop_event, target_width, frame_stride, _process_frame)
 
     finally:
         try:

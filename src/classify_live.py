@@ -6,7 +6,7 @@ import mediapipe as mp
 from mediapipe.tasks.python.vision.pose_landmarker import PoseLandmarkerResult
 
 from drawing import draw_pose_points
-from live_fall_detector import LiveManDownDetector
+from live_fall_detector import LiveManDownDetector, DetectorConfig, MultiPersonDetector
 from mongodb import insert_message_mongo_db
 from pipeline_horizontal_classification import load_models
 from push_notification import (
@@ -102,6 +102,84 @@ def _notify_heartbeat() -> None:
     _schedule(send_push_notification_heartbeat())
 
 
+def _horizontal_trigger(out: dict) -> bool:
+    return bool(out.get("horizontal_event")) and out.get("horizontal_prob", 0.0) > 0.70
+
+
+def _fall_trigger(out: dict) -> bool:
+    return bool(out.get("fall_event")) and out.get("fall_prob", 0.0) > 0.98
+
+
+def _maybe_notify_heartbeat(no_movement: bool, abnormal_hr: bool) -> None:
+    if (not LatestHeartbeat.NOTIED_FALL) and abnormal_hr and no_movement:
+        LatestHeartbeat.NOTIED_FALL = True
+        _notify_heartbeat()
+
+
+def _handle_disabled_state(
+    result: PoseLandmarkerResult,
+    frame_landmarks,
+    timestamp_ms: int,
+    no_movement: bool,
+    abnormal_hr: bool,
+) -> bool:
+    global _detector_enabled, _detector_disabled_until_ms
+
+    _maybe_notify_heartbeat(no_movement, abnormal_hr)
+
+    if _can_reenable_detector(result, timestamp_ms):
+        _detector_enabled = True
+        LatestHeartbeat.NOTIED_FALL = False
+        return False
+
+    _detector.update(frame_landmarks)
+    return True
+
+
+def _handle_horizontal_event(out: dict, timestamp_ms: int, no_movement: bool, abnormal_hr: bool) -> bool:
+    if not _horizontal_trigger(out):
+        return False
+
+    if not LatestHeartbeat.NOTIED_FALL:
+        _notify_monitoring()
+
+    if abnormal_hr and no_movement:
+        _notify_push("Man Down Detected", "A man is down please check your app!")
+        _notify_mongo(
+            "Man Down Detected",
+            f"Man down detected at timestamp: {_now_str()}ms",
+            alert=True,
+        )
+        log.info(
+            f"[{timestamp_ms}ms] MAN DOWN (HORIZONTAL) prob={out.get('horizontal_prob', 0.0):.3f} "
+            f"hits={out.get('horizontal_hits', 0)}"
+        )
+        return True
+
+    return False
+
+
+def _handle_fall_event(out: dict, timestamp_ms: int, abnormal_hr: bool) -> bool:
+    if not _fall_trigger(out):
+        return False
+
+    log.info(
+        f"[{timestamp_ms}ms] FALL prob={out.get('fall_prob', 0.0):.3f} hits={out.get('fall_hits', 0)}"
+    )
+    _notify_push("Man Fall Detected", "A fall was detected please check your app!")
+    _notify_mongo(
+        "Fall Detected",
+        f"Fall detected at timestamp: {_now_str()}ms",
+        alert=True,
+    )
+
+    if abnormal_hr:
+        LatestHeartbeat.NOTIED_FALL = True
+        _notify_heartbeat()
+
+    return True
+
+
 def classify_live(result: PoseLandmarkerResult, image: mp.Image, timestamp_ms: int) -> None:
     global _detector_enabled, _detector_disabled_until_ms, _detector
 
@@ -114,60 +192,19 @@ def classify_live(result: PoseLandmarkerResult, image: mp.Image, timestamp_ms: i
     no_movement = _is_no_movement()
     abnormal_hr = _is_abnormal_hr()
 
-    if not _detector_enabled:
-        if (not LatestHeartbeat.NOTIED_FALL) and abnormal_hr and no_movement:
-            LatestHeartbeat.NOTIED_FALL = True
-            _notify_heartbeat()
-
-        if _can_reenable_detector(result, timestamp_ms):
-            _detector_enabled = True
-            LatestHeartbeat.NOTIED_FALL = False
-        else:
-            _detector.update(frame_landmarks)
-            return
-
-    out = _detector.update(frame_landmarks)
-    if not out.get("ready", False):
+    if not _detector_enabled and _handle_disabled_state(result, frame_landmarks, timestamp_ms, no_movement, abnormal_hr):
         return
 
+    outputs = _detector.update(frame_landmarks)
     inhibited = False
 
-    horizontal_event = out.get("horizontal_event") and out.get("horizontal_prob", 0.0) > 0.70
-    fall_event = out.get("fall_event") and out.get("fall_prob", 0.0) > 0.98
+    for entry in outputs:
+        out = entry.get("output", {})
+        if not out.get("ready", False):
+            continue
 
-    if horizontal_event:
-        if not LatestHeartbeat.NOTIED_FALL:
-            _notify_monitoring()
-
-        if abnormal_hr and no_movement:
-            _notify_push("Man Down Detected", "A man is down please check your app!")
-            _notify_mongo(
-                "Man Down Detected",
-                f"Man down detected at timestamp: {_now_str()}ms",
-                alert=True,
-            )
-            log.info(
-                f"[{timestamp_ms}ms] MAN DOWN (HORIZONTAL) prob={out.get('horizontal_prob', 0.0):.3f} "
-                f"hits={out.get('horizontal_hits', 0)}"
-            )
-            inhibited = True
-
-    if fall_event:
-        log.info(
-            f"[{timestamp_ms}ms] FALL prob={out.get('fall_prob', 0.0):.3f} hits={out.get('fall_hits', 0)}"
-        )
-        _notify_push("Man Fall Detected", "A fall was detected please check your app!")
-        _notify_mongo(
-            "Fall Detected",
-            f"Fall detected at timestamp: {_now_str()}ms",
-            alert=True,
-        )
-
-        if abnormal_hr:
-            LatestHeartbeat.NOTIED_FALL = True
-            _notify_heartbeat()
-
-        inhibited = True
+        inhibited = _handle_horizontal_event(out, timestamp_ms, no_movement, abnormal_hr) or inhibited
+        inhibited = _handle_fall_event(out, timestamp_ms, abnormal_hr) or inhibited
 
     if inhibited:
         _detector_enabled = False
@@ -177,20 +214,31 @@ def classify_live(result: PoseLandmarkerResult, image: mp.Image, timestamp_ms: i
 
 bundle = load_models("../data/icaro_models.joblib")
 
-_detector = LiveManDownDetector(
+def _make_detector_instance() -> LiveManDownDetector:
+    return LiveManDownDetector(
+        BodyLandmark,
+        fall_model=bundle["fall_model"],
+        horizontal_model=bundle["horizontal_model"],
+        window=bundle["cfg"]["window"],
+        config=DetectorConfig(
+            fall_min_vis_point=bundle["cfg"]["fall_min_vis_point"],
+            fall_min_pres_point=bundle["cfg"]["fall_min_pres_point"],
+            fall_min_required_core_points=bundle["cfg"]["fall_min_required_core_points"],
+            horizontal_min_quality=bundle["cfg"]["horizontal_min_quality"],
+            horizontal_min_good_keypoints=bundle["cfg"]["horizontal_min_good_keypoints"],
+            fall_threshold=0.70,
+            horizontal_threshold=0.60,
+            consecutive_fall=5,
+            consecutive_horizontal=3,
+            reset_on_invalid=False,
+            min_window_quality="high",
+        ),
+    )
+
+
+_detector = MultiPersonDetector(
     BodyLandmark,
-    fall_model=bundle["fall_model"],
-    horizontal_model=bundle["horizontal_model"],
-    window=bundle["cfg"]["window"],
-    fall_min_vis_point=bundle["cfg"]["fall_min_vis_point"],
-    fall_min_pres_point=bundle["cfg"]["fall_min_pres_point"],
-    fall_min_required_core_points=bundle["cfg"]["fall_min_required_core_points"],
-    horizontal_min_quality=bundle["cfg"]["horizontal_min_quality"],
-    horizontal_min_good_keypoints=bundle["cfg"]["horizontal_min_good_keypoints"],
-    fall_threshold=0.70,
-    horizontal_threshold=0.60,
-    consecutive_fall=5,
-    consecutive_horizontal=3,
-    reset_on_invalid=False,
-    min_window_quality="high",
+    _make_detector_instance,
+    distance_threshold=0.12,
+    max_tracks=8,
 )
