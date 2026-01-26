@@ -201,7 +201,7 @@ async def upload_video(file: UploadFile = File(...)):
     }
 
 
-@app.put("/api/v1/running-mode/live-stream")
+@app.patch("/api/v1/running-mode/live-stream")
 async def set_running_mode_live_stream():
     global RUNNING_MODE
     RUNNING_MODE = vision.RunningMode.LIVE_STREAM
@@ -217,7 +217,7 @@ async def set_running_mode_live_stream():
     }
 
 
-@app.put("/api/v1/running-mode/video")
+@app.patch("/api/v1/running-mode/video")
 async def set_running_mode_video():
     global RUNNING_MODE
     RUNNING_MODE = vision.RunningMode.VIDEO
