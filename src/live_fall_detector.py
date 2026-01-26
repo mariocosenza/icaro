@@ -1,11 +1,15 @@
 import math
 from collections import deque
 from dataclasses import dataclass
-from typing import Union, Dict, Optional, Any, Tuple
+from typing import Union, Dict, Optional, Any, Tuple, TYPE_CHECKING
 from uuid import uuid4
 
 import numpy as np
-from sklearn.pipeline import Pipeline
+
+if TYPE_CHECKING:
+    from sklearn.pipeline import Pipeline
+else:
+    Pipeline = Any
 
 from pipeline_horizontal_classification import (
     Pose33, extract_frame_features_fall, extract_frame_features_horizontal,
@@ -239,22 +243,32 @@ class PersonTrack:
     track_id: str
     detector: LiveManDownDetector
     center: Tuple[float, float]
+    last_seen_frame: int
 
 
 class MultiPersonDetector:
     def __init__(
-        self,
-        body_landmark_cls,
-        create_detector,
-        *,
-        distance_threshold: float = 0.12,
-        max_tracks: int = 8,
+            self,
+            body_landmark_cls,
+            create_detector,
+            *,
+            distance_threshold: float = 0.12,
+            max_tracks: int = 8,
+            max_missed: int = 30,
+            center_min_vis: float = 0.30,
+            center_min_pres: float = 0.30,
+            center_smoothing: float = 0.60,
     ) -> None:
         self.body_landmark_cls = body_landmark_cls
         self.create_detector = create_detector
         self.distance_threshold = float(distance_threshold)
         self.max_tracks = int(max_tracks)
+        self.max_missed = int(max_missed)
+        self.center_min_vis = float(center_min_vis)
+        self.center_min_pres = float(center_min_pres)
+        self.center_smoothing = float(center_smoothing)
         self.tracks: Dict[str, PersonTrack] = {}
+        self._frame_idx = 0
 
     def _pose_center(self, pose33: Pose33) -> Tuple[float, float]:
         idx = lambda e: int(e.value) if hasattr(e, "value") else int(e)
@@ -265,6 +279,31 @@ class MultiPersonDetector:
                 return float(lm.get("x", fallback[0])), float(lm.get("y", fallback[1]))
             except Exception:
                 return fallback
+
+        def get_vis_pres(i: int) -> Tuple[float, float]:
+            try:
+                lm = pose33[i]
+                return float(lm.get("visibility", 0.0)), float(lm.get("presence", 0.0))
+            except Exception:
+                return 0.0, 0.0
+
+        center_points = []
+        for key in (
+                self.body_landmark_cls.NOSE,
+                self.body_landmark_cls.LEFT_SHOULDER,
+                self.body_landmark_cls.RIGHT_SHOULDER,
+                self.body_landmark_cls.LEFT_HIP,
+                self.body_landmark_cls.RIGHT_HIP,
+        ):
+            i = idx(key)
+            vis, pres = get_vis_pres(i)
+            if vis >= self.center_min_vis and pres >= self.center_min_pres:
+                center_points.append(get_xy(i, (0.0, 0.0)))
+
+        if center_points:
+            xs = [pt[0] for pt in center_points]
+            ys = [pt[1] for pt in center_points]
+            return float(sum(xs) / len(xs)), float(sum(ys) / len(ys))
 
         nose = get_xy(idx(self.body_landmark_cls.NOSE), (0.0, 0.0))
         hips = get_xy(idx(self.body_landmark_cls.LEFT_HIP), nose)
@@ -285,20 +324,52 @@ class MultiPersonDetector:
         return None
 
     def _ensure_capacity(self) -> None:
-        if len(self.tracks) <= self.max_tracks:
+        if len(self.tracks) < self.max_tracks:
             return
-        oldest_id = next(iter(self.tracks))
+        oldest_id = min(self.tracks, key=lambda tid: self.tracks[tid].last_seen_frame)
         self.tracks.pop(oldest_id, None)
 
+    def _prune_stale(self) -> None:
+        if not self.tracks:
+            return
+        cutoff = self._frame_idx - self.max_missed
+        stale = [tid for tid, track in self.tracks.items() if track.last_seen_frame < cutoff]
+        for tid in stale:
+            self.tracks.pop(tid, None)
+
     def update(self, poses: Optional[list[Pose33]]) -> list[Dict[str, Any]]:
+        self._frame_idx += 1
+        self._prune_stale()
+
         if not poses:
             return []
 
         outputs: list[Dict[str, Any]] = []
+        centers = [self._pose_center(pose33) for pose33 in poses]
 
-        for pose33 in poses:
-            center = self._pose_center(pose33)
-            track_id = self._nearest_track(center)
+        assignments: Dict[int, str] = {}
+        used_tracks: set[str] = set()
+
+        if self.tracks:
+            pairs = []
+            for pose_idx, center in enumerate(centers):
+                for tid, track in self.tracks.items():
+                    dx = center[0] - track.center[0]
+                    dy = center[1] - track.center[1]
+                    dist = math.hypot(dx, dy)
+                    if dist <= self.distance_threshold:
+                        pairs.append((dist, pose_idx, tid))
+
+            pairs.sort(key=lambda item: item[0])
+            for _, pose_idx, tid in pairs:
+                if pose_idx in assignments or tid in used_tracks:
+                    continue
+                assignments[pose_idx] = tid
+                used_tracks.add(tid)
+
+        for pose_idx, pose33 in enumerate(poses):
+            center = centers[pose_idx]
+            track_id = assignments.get(pose_idx)
 
             if track_id is None:
                 self._ensure_capacity()
@@ -307,10 +378,20 @@ class MultiPersonDetector:
                     track_id=track_id,
                     detector=self.create_detector(),
                     center=center,
+                    last_seen_frame=self._frame_idx,
                 )
+            else:
+                track = self.tracks[track_id]
+                alpha = self.center_smoothing
+                if 0.0 < alpha < 1.0:
+                    center = (
+                        track.center[0] * (1.0 - alpha) + center[0] * alpha,
+                        track.center[1] * (1.0 - alpha) + center[1] * alpha,
+                    )
+                track.center = center
+                track.last_seen_frame = self._frame_idx
 
             track = self.tracks[track_id]
-            track.center = center
             out = track.detector.update(pose33)
 
             outputs.append({

@@ -437,6 +437,8 @@ Both HTTP and HTTPS protocols supported with any port.
 **MultiPersonDetector Class**:
 - Tracks multiple people simultaneously (up to 8)
 - Person tracking by pose center (Euclidean distance matching)
+- Greedy one-to-one assignment per frame to avoid double-matching tracks
+- Track aging with stale cleanup and center smoothing for stability
 - Per-person detector instances with individual state
 - Distance threshold: 0.12 (normalized coordinates)
 

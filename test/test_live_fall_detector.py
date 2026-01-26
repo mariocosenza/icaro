@@ -93,9 +93,11 @@ class TestLiveFallDetector(unittest.TestCase):
 
     def test_multi_person_tracks_are_created_and_reused(self):
         det1 = MagicMock()
-        det1.update.return_value = {"ready": True, "fall_event": False, "fall_prob": 0.1, "horizontal_event": False, "horizontal_prob": None}
+        det1.update.return_value = {"ready": True, "fall_event": False, "fall_prob": 0.1, "horizontal_event": False,
+                                    "horizontal_prob": None}
         det2 = MagicMock()
-        det2.update.return_value = {"ready": True, "fall_event": False, "fall_prob": 0.2, "horizontal_event": False, "horizontal_prob": None}
+        det2.update.return_value = {"ready": True, "fall_event": False, "fall_prob": 0.2, "horizontal_event": False,
+                                    "horizontal_prob": None}
 
         factory = MagicMock()
         factory.side_effect = [det1, det2]
@@ -114,6 +116,48 @@ class TestLiveFallDetector(unittest.TestCase):
         second_outputs = multi.update([make_pose(x=0.11, y=0.11)])
         self.assertEqual(len(second_outputs), 1)
         self.assertIn(second_outputs[0]["track_id"], track_ids)
+
+    def test_tracks_are_pruned_after_missed_frames(self):
+        det = MagicMock()
+        det.update.return_value = {"ready": True}
+        factory = MagicMock(return_value=det)
+
+        multi = MultiPersonDetector(
+            BodyLandmark,
+            factory,
+            distance_threshold=0.5,
+            max_tracks=4,
+            max_missed=1,
+        )
+
+        outputs = multi.update([make_pose(x=0.2, y=0.2)])
+        self.assertEqual(len(outputs), 1)
+        self.assertEqual(len(multi.tracks), 1)
+
+        multi.update([])
+        self.assertEqual(len(multi.tracks), 1)
+
+        multi.update([])
+        self.assertEqual(len(multi.tracks), 0)
+
+    def test_one_to_one_assignment_creates_new_track(self):
+        det1 = MagicMock()
+        det1.update.return_value = {"ready": True}
+        det2 = MagicMock()
+        det2.update.return_value = {"ready": True}
+
+        factory = MagicMock(side_effect=[det1, det2])
+        multi = MultiPersonDetector(BodyLandmark, factory, distance_threshold=1.0, max_tracks=4)
+
+        first = multi.update([make_pose(x=0.1, y=0.1)])
+        self.assertEqual(len(first), 1)
+        existing_id = first[0]["track_id"]
+
+        second = multi.update([make_pose(x=0.11, y=0.11), make_pose(x=0.12, y=0.12)])
+        self.assertEqual(len(second), 2)
+        ids = {entry["track_id"] for entry in second}
+        self.assertIn(existing_id, ids)
+        self.assertEqual(len(ids), 2)
 
 
 if __name__ == "__main__":
