@@ -127,7 +127,8 @@ class AlertsPage extends StatefulWidget {
 }
 
 class _AlertsPageState extends State<AlertsPage> {
-  static const String endpoint = "http://192.168.1.15:8000/api/v1/alerts";
+  static const String _defaultBackendHost = "192.168.1.15:8000";
+  String _backendHost = _defaultBackendHost;
 
   bool _loading = true;
   String? _error;
@@ -136,8 +137,15 @@ class _AlertsPageState extends State<AlertsPage> {
   @override
   void initState() {
     super.initState();
-    _initNotifications();
-    _load();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _bootstrap();
+    });
+  }
+
+  Future<void> _bootstrap() async {
+    await _initNotifications();
+    await _promptForBackend();
+    await _load();
   }
 
   Future<void> _initNotifications() async {
@@ -154,9 +162,94 @@ class _AlertsPageState extends State<AlertsPage> {
 
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("$title: $body")),
+        SnackBar(
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: Colors.grey.shade900,
+          content: Row(
+            children: [
+              const Icon(Icons.notifications, color: Colors.white),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  "$title: $body",
+                  style: const TextStyle(color: Colors.white),
+                ),
+              ),
+            ],
+          ),
+        ),
       );
     });
+  }
+
+  String _normalizeBackendHost(String input) {
+    final trimmed = input.trim();
+    if (trimmed.isEmpty) return _defaultBackendHost;
+    if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+      return trimmed;
+    }
+    return trimmed;
+  }
+
+  String get _endpoint {
+    final normalized = _normalizeBackendHost(_backendHost);
+    final base = normalized.startsWith("http://") || normalized.startsWith("https://")
+        ? normalized
+        : "http://$normalized";
+    final trimmedBase = base.endsWith("/") ? base.substring(0, base.length - 1) : base;
+    return "$trimmedBase/api/v1/alerts";
+  }
+
+  Future<void> _promptForBackend() async {
+    final controller = TextEditingController(text: _backendHost);
+    final result = await showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text("Backend IP"),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                "Enter the backend IP (optionally with port).",
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: controller,
+                keyboardType: TextInputType.url,
+                decoration: const InputDecoration(
+                  hintText: "192.168.1.15:8000",
+                  border: OutlineInputBorder(),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop(_defaultBackendHost);
+              },
+              child: const Text("Use default"),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.of(context).pop(controller.text);
+              },
+              child: const Text("Connect"),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (!mounted) return;
+    if (result != null && result.trim().isNotEmpty) {
+      setState(() {
+        _backendHost = result.trim();
+      });
+    }
   }
 
   Future<void> _load() async {
@@ -166,7 +259,7 @@ class _AlertsPageState extends State<AlertsPage> {
     });
 
     try {
-      final res = await http.get(Uri.parse(endpoint));
+      final res = await http.get(Uri.parse(_endpoint));
       if (res.statusCode < 200 || res.statusCode >= 300) {
         throw Exception("HTTP ${res.statusCode}: ${res.body}");
       }
@@ -232,6 +325,14 @@ class _AlertsPageState extends State<AlertsPage> {
 
   Future<void> _onRefresh() => _load();
 
+  String _formatTimestamp(DateTime ts) {
+    if (ts.millisecondsSinceEpoch == 0) return "Unknown time";
+    final local = ts.toLocal();
+    String two(int v) => v.toString().padLeft(2, '0');
+    return "${local.year}-${two(local.month)}-${two(local.day)} "
+        "${two(local.hour)}:${two(local.minute)}:${two(local.second)}";
+  }
+
   @override
   Widget build(BuildContext context) {
     final body = _loading
@@ -267,13 +368,48 @@ class _AlertsPageState extends State<AlertsPage> {
                       final icon = item.alert
                           ? Icons.error_outline
                           : Icons.warning_amber_outlined;
+                      final color = item.alert ? Colors.red : Colors.orange;
 
-                      return ListTile(
-                        leading: Icon(icon),
-                        title: Text(
-                          item.title.isEmpty ? "(no title)" : item.title,
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 6,
                         ),
-                        subtitle: Text(item.message),
+                        child: Card(
+                          elevation: 0,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                            side: BorderSide(color: color.withOpacity(0.35)),
+                          ),
+                          child: ListTile(
+                            leading: Container(
+                              width: 42,
+                              height: 42,
+                              decoration: BoxDecoration(
+                                color: color.withOpacity(0.15),
+                                shape: BoxShape.circle,
+                              ),
+                              child: Icon(icon, color: color),
+                            ),
+                            title: Text(
+                              item.title.isEmpty ? "(no title)" : item.title,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            subtitle: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(item.message),
+                                const SizedBox(height: 4),
+                                Text(
+                                  _formatTimestamp(item.timestamp),
+                                  style: Theme.of(context).textTheme.bodySmall,
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
                       );
                     },
                   );
