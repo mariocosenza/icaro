@@ -117,12 +117,12 @@ def show_single_image(mp_image: mp.Image, detection_result, window_name: str = "
 
 
 def show_video_loop(
-    frames_iter,
-    get_result_fn,
-    window_name: str = "Pose",
-    max_w: int = 1280,
-    max_h: int = 720,
-    wait_ms: int = 1,
+        frames_iter,
+        get_result_fn,
+        window_name: str = "Pose",
+        max_w: int = 1280,
+        max_h: int = 720,
+        wait_ms: int = 1,
 ) -> None:
     """
     Generic loop for video/webcam:

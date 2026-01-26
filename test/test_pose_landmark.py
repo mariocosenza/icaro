@@ -41,7 +41,7 @@ class TestPoseLandmark(unittest.TestCase):
         res = _resize_frame(frame, 100)
         self.assertEqual(res.shape[1], 100)
         self.assertEqual(res.shape[0], 50)
-        
+
         res2 = _resize_frame(frame, None)
         self.assertEqual(res2.shape, (100, 200, 3))
 
@@ -61,7 +61,7 @@ class TestPoseLandmark(unittest.TestCase):
         cap = MagicMock()
         cap.get.return_value = 1000.0
         self.assertEqual(_timestamp_video(cap, 10, 30.0), 1000)
-        
+
         cap.get.return_value = 0.0
         self.assertEqual(_timestamp_video(cap, 3, 30.0), 100)
 
@@ -71,6 +71,7 @@ class TestPoseLandmark(unittest.TestCase):
         from mediapipe.tasks.python.vision import RunningMode
         _make_detector(cfg, RunningMode.VIDEO)
         mock_landmarker.create_from_options.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()

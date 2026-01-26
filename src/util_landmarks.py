@@ -1,9 +1,11 @@
 import enum
 
+
 class GroundCoordinates:
     X = 0
     Y = 0
     Z = 0
+
 
 class BodyLandmark(enum.IntEnum):
     NOSE = 0

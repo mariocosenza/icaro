@@ -1,10 +1,13 @@
 # ICARO src package
-from . import mongodb
-from . import push_notification
-from . import pose_landmark
-from . import classify_live
-from . import live_fall_detector
-from . import drawing
-from . import util_landmarks
-from . import calibration
-from . import pipeline_horizontal_classification
+# Keep imports minimal to avoid optional dependency side effects at import time.
+__all__ = [
+    "mongodb",
+    "push_notification",
+    "pose_landmark",
+    "classify_live",
+    "live_fall_detector",
+    "drawing",
+    "util_landmarks",
+    "calibration",
+    "pipeline_horizontal_classification",
+]

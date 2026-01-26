@@ -1,8 +1,7 @@
-import unittest
-from unittest.mock import MagicMock, patch
-import asyncio
 import os
 import sys
+import unittest
+from unittest.mock import MagicMock, patch
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT not in sys.path:
@@ -18,10 +17,11 @@ sys.modules['firebase_admin.messaging'] = MagicMock()
 sys.modules['joblib'] = MagicMock()
 
 from src.classify_live import (
-    _lm_to_dict, _result_to_frame_landmarks, _is_no_movement, 
+    _lm_to_dict, _result_to_frame_landmarks, _is_no_movement,
     _is_abnormal_hr, _can_reenable_detector, classify_live
 )
 from src.util_landmarks import BodyLandmark
+
 
 class TestClassifyLive(unittest.TestCase):
 
@@ -70,7 +70,7 @@ class TestClassifyLive(unittest.TestCase):
         landmarks = [MagicMock()] * 33
         landmarks[BodyLandmark.LEFT_SHOULDER] = lm
         result.pose_landmarks = [landmarks]
-        
+
         with patch('src.classify_live.GroundCoordinates') as mock_ground:
             mock_ground.Y = 0.3
             self.assertTrue(_can_reenable_detector(result, 5000))
@@ -86,18 +86,20 @@ class TestClassifyLive(unittest.TestCase):
         # We need to initialize the global detector
         import src.classify_live as cl
         cl._detector = MagicMock()
-        cl._detector.update.return_value = [{"ready": True, "fall_event": False, "horizontal_event": False, "track_id": 0}]
-        
+        cl._detector.update.return_value = [
+            {"ready": True, "fall_event": False, "horizontal_event": False, "track_id": 0}]
+
         mock_res_to_lm.return_value = [[]]
         mock_mov.return_value = False
         mock_hr.return_value = False
-        
+
         result = MagicMock()
         result.pose_landmarks = [True]
-        
+
         classify_live(result, MagicMock(), 1000)
-        
+
         cl._detector.update.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()

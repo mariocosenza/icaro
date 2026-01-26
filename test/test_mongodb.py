@@ -1,14 +1,15 @@
-import unittest
-from unittest.mock import MagicMock, patch
 import asyncio
 import os
 import sys
+import unittest
+from unittest.mock import MagicMock, patch
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from src.mongodb import get_database, insert_message_mongo_db, get_all_data_from_mongo_db
+
 
 class TestMongoDB(unittest.TestCase):
 
@@ -41,7 +42,7 @@ class TestMongoDB(unittest.TestCase):
         mock_get_db.return_value = mock_db
         mock_collection = MagicMock()
         mock_db.__getitem__.return_value = mock_collection
-        
+
         mock_collection.find.return_value = [
             {'_id': '123', 'title': 't1', 'message': 'm1', 'alert': True},
             {'_id': '456', 'title': 't2', 'message': 'm2', 'alert': False}
@@ -51,6 +52,7 @@ class TestMongoDB(unittest.TestCase):
         self.assertEqual(len(result['alerts']), 2)
         self.assertEqual(result['alerts'][0]['_id'], '123')
         self.assertEqual(result['alerts'][1]['title'], 't2')
+
 
 if __name__ == "__main__":
     unittest.main()
