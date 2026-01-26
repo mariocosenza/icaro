@@ -1,14 +1,38 @@
+from __future__ import annotations
+
 import asyncio
 import logging
 import time
 from dataclasses import dataclass
 from typing import Optional, Union
 
-import cv2
-import mediapipe as mp
-import pandas as pd
-from mediapipe.tasks import python
-from mediapipe.tasks.python import vision
+try:
+    import cv2
+
+    CV2_AVAILABLE = True
+except ModuleNotFoundError:
+    cv2 = None
+    CV2_AVAILABLE = False
+
+try:
+    import mediapipe as mp
+    from mediapipe.tasks import python
+    from mediapipe.tasks.python import vision
+
+    MP_AVAILABLE = True
+except ModuleNotFoundError:
+    mp = None
+    python = None
+    vision = None
+    MP_AVAILABLE = False
+
+try:
+    import pandas as pd
+
+    PANDAS_AVAILABLE = True
+except ModuleNotFoundError:
+    pd = None
+    PANDAS_AVAILABLE = False
 
 from calibration import calibrate_ground_for_stream
 from classify_live import classify_live
@@ -44,6 +68,8 @@ def _resolve_width(width: WidthSpec) -> Optional[int]:
 
 
 def _open_capture(path: str, webcam: bool) -> cv2.VideoCapture:
+    if not CV2_AVAILABLE:
+        raise RuntimeError("OpenCV (cv2) is required to open video capture.")
     cap = cv2.VideoCapture(0 if webcam else path)
     if not cap.isOpened():
         raise IOError(f"Couldn't open {'webcam' if webcam else 'video file'}: {path}")
@@ -51,6 +77,8 @@ def _open_capture(path: str, webcam: bool) -> cv2.VideoCapture:
 
 
 def _get_fps(cap: cv2.VideoCapture) -> float:
+    if not CV2_AVAILABLE:
+        raise RuntimeError("OpenCV (cv2) is required to query FPS.")
     fps = cap.get(cv2.CAP_PROP_FPS)
     if fps is None or fps <= 1e-6:
         return 30.0
@@ -58,6 +86,8 @@ def _get_fps(cap: cv2.VideoCapture) -> float:
 
 
 def _resize_frame(frame, target_width: Optional[int]):
+    if not CV2_AVAILABLE:
+        raise RuntimeError("OpenCV (cv2) is required to resize frames.")
     if target_width is None:
         return frame
     h, w = frame.shape[:2]
@@ -68,6 +98,8 @@ def _resize_frame(frame, target_width: Optional[int]):
 
 
 def _mp_image_from_bgr(frame):
+    if not MP_AVAILABLE:
+        raise RuntimeError("MediaPipe is required to build mp.Image.")
     frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     return mp.Image(image_format=mp.ImageFormat.SRGB, data=frame_rgb)
 
@@ -84,11 +116,11 @@ def _timestamp_video(cap: cv2.VideoCapture, frame_index: int, fps: float) -> int
 
 
 async def _run_stream(
-    cap: cv2.VideoCapture,
-    stop_event: asyncio.Event,
-    target_width: Optional[int],
-    frame_stride: int,
-    process_frame,
+        cap: cv2.VideoCapture,
+        stop_event: asyncio.Event,
+        target_width: Optional[int],
+        frame_stride: int,
+        process_frame,
 ) -> None:
     frame_index = 0
     while cap.isOpened() and not stop_event.is_set():
@@ -111,6 +143,8 @@ async def _run_stream(
 
 
 def _ensure_ground_calibrated() -> None:
+    if not PANDAS_AVAILABLE:
+        raise RuntimeError("pandas is required for ground calibration loading.")
     if GroundCoordinates.X != 0 or GroundCoordinates.Y != 0 or GroundCoordinates.Z != 0:
         return
 
@@ -128,6 +162,8 @@ def _ensure_ground_calibrated() -> None:
 
 
 def _make_detector(cfg: PoseConfig, running_mode: vision.RunningMode):
+    if not MP_AVAILABLE:
+        raise RuntimeError("MediaPipe is required to create pose detectors.")
     base_options = python.BaseOptions(model_asset_path=cfg.model_path)
 
     common = {
@@ -149,6 +185,8 @@ def _make_detector(cfg: PoseConfig, running_mode: vision.RunningMode):
 
 
 def pose_video_dataset(path: str, resize_width: WidthSpec = "medium", cfg: PoseConfig = PoseConfig()) -> pd.DataFrame:
+    if not (MP_AVAILABLE and CV2_AVAILABLE and PANDAS_AVAILABLE):
+        raise RuntimeError("pose_video_dataset requires mediapipe, opencv, and pandas.")
     options = vision.PoseLandmarkerOptions(
         base_options=python.BaseOptions(model_asset_path=cfg.model_path),
         running_mode=vision.RunningMode.VIDEO,
@@ -192,7 +230,10 @@ def pose_video_dataset(path: str, resize_width: WidthSpec = "medium", cfg: PoseC
     return pd.DataFrame(rows)
 
 
-def pose_point(path: str, running_mode: vision.RunningMode, webcam: bool, quality: WidthSpec = "medium", cfg: PoseConfig = PoseConfig()):
+def pose_point(path: str, running_mode: vision.RunningMode, webcam: bool, quality: WidthSpec = "medium",
+               cfg: PoseConfig = PoseConfig()):
+    if not (MP_AVAILABLE and CV2_AVAILABLE):
+        raise RuntimeError("pose_point requires mediapipe and opencv.")
     detector = _make_detector(cfg, running_mode)
 
     if running_mode == vision.RunningMode.IMAGE:
@@ -245,14 +286,16 @@ def main(running_mode: vision.RunningMode, path: str, quality: WidthSpec = "medi
 
 
 async def run_pose_async(
-    path: str,
-    running_mode: vision.RunningMode,
-    quality: WidthSpec = "medium",
-    stop_event: Optional[asyncio.Event] = None,
-    webcam: Optional[bool] = None,
-    frame_stride: int = 1,
-    cfg: PoseConfig = PoseConfig(),
+        path: str,
+        running_mode: vision.RunningMode,
+        quality: WidthSpec = "medium",
+        stop_event: Optional[asyncio.Event] = None,
+        webcam: Optional[bool] = None,
+        frame_stride: int = 1,
+        cfg: PoseConfig = PoseConfig(),
 ):
+    if not (MP_AVAILABLE and CV2_AVAILABLE):
+        raise RuntimeError("run_pose_async requires mediapipe and opencv.")
     if stop_event is None:
         stop_event = asyncio.Event()
 

@@ -1,7 +1,12 @@
+import importlib.util
+import os
+import sys
 import unittest
 from unittest.mock import MagicMock, patch
-import sys
-import os
+
+HAS_MEDIAPIPE = importlib.util.find_spec("mediapipe") is not None
+if not HAS_MEDIAPIPE:
+    raise unittest.SkipTest("mediapipe not installed")
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT not in sys.path:
@@ -18,10 +23,11 @@ sys.modules['joblib'] = MagicMock()
 
 # Mock internal src dependencies only during app import
 from fastapi.testclient import TestClient
+
 with patch('src.mongodb.get_database'), \
-     patch('src.pose_landmark.run_pose_async'), \
-     patch('src.push_notification.credentials.Certificate'), \
-     patch('firebase_admin.initialize_app'):
+        patch('src.pose_landmark.run_pose_async'), \
+        patch('src.push_notification.credentials.Certificate'), \
+        patch('firebase_admin.initialize_app'):
     from src.app import app
 
 client = TestClient(app)
@@ -29,8 +35,10 @@ client = TestClient(app)
 mock_mongo = MagicMock()
 mock_pose = MagicMock()
 
+
 async def mock_run_pose_async(*args, **kwargs):
     pass
+
 
 class TestApp(unittest.TestCase):
 
@@ -83,6 +91,7 @@ class TestApp(unittest.TestCase):
     def test_set_running_mode_video(self):
         response = client.put("/api/v1/running-mode/video")
         self.assertEqual(response.status_code, 200)
+
 
 if __name__ == "__main__":
     unittest.main()

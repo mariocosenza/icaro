@@ -1,18 +1,48 @@
+from __future__ import annotations
+
 import logging
 import os
 
 os.environ["GLOG_minloglevel"] = "2"
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
 
-import cv2
-import mediapipe as mp
-import pandas as pd
+try:
+    import cv2
 
-from mediapipe.tasks.python.core.base_options import BaseOptions
-from mediapipe.tasks.python.vision import RunningMode
-from mediapipe.tasks.python.vision.gesture_recognizer import GestureRecognizerOptions, GestureRecognizer
-from mediapipe.tasks.python.vision.gesture_recognizer_result import GestureRecognizerResult
-from mediapipe.tasks.python.vision.pose_landmarker import PoseLandmarkerOptions, PoseLandmarker, PoseLandmarkerResult
+    CV2_AVAILABLE = True
+except ModuleNotFoundError:
+    cv2 = None
+    CV2_AVAILABLE = False
+
+try:
+    import mediapipe as mp
+    from mediapipe.tasks.python.core.base_options import BaseOptions
+    from mediapipe.tasks.python.vision import RunningMode
+    from mediapipe.tasks.python.vision.gesture_recognizer import GestureRecognizerOptions, GestureRecognizer
+    from mediapipe.tasks.python.vision.gesture_recognizer_result import GestureRecognizerResult
+    from mediapipe.tasks.python.vision.pose_landmarker import PoseLandmarkerOptions, PoseLandmarker, \
+        PoseLandmarkerResult
+
+    MP_AVAILABLE = True
+except ModuleNotFoundError:
+    mp = None
+    BaseOptions = None
+    RunningMode = None
+    GestureRecognizerOptions = None
+    GestureRecognizer = None
+    GestureRecognizerResult = None
+    PoseLandmarkerOptions = None
+    PoseLandmarker = None
+    PoseLandmarkerResult = None
+    MP_AVAILABLE = False
+
+try:
+    import pandas as pd
+
+    PANDAS_AVAILABLE = True
+except ModuleNotFoundError:
+    pd = None
+    PANDAS_AVAILABLE = False
 
 from drawing import draw_pose_points
 from util_landmarks import GroundCoordinates, BodyLandmark
@@ -41,8 +71,8 @@ def pose_result_callback(result: PoseLandmarkerResult, image: mp.Image, timestam
         right_knee = result.pose_world_landmarks[0][BodyLandmark.RIGHT_KNEE]
 
         if (
-            left_knee.presence > 0.75 and left_knee.visibility > 0.70 and
-            right_knee.presence > 0.75 and right_knee.visibility > 0.70
+                left_knee.presence > 0.75 and left_knee.visibility > 0.70 and
+                right_knee.presence > 0.75 and right_knee.visibility > 0.70
         ):
             GROUND = {
                 "x": (left_knee.x + right_knee.x) / 2,
@@ -53,6 +83,8 @@ def pose_result_callback(result: PoseLandmarkerResult, image: mp.Image, timestam
 
 
 def _timestamp_ms(cap: cv2.VideoCapture, webcam: bool, frame_index: int) -> int:
+    if not CV2_AVAILABLE:
+        raise RuntimeError("OpenCV (cv2) is required for calibration.")
     if not webcam:
         ms = cap.get(cv2.CAP_PROP_POS_MSEC)
         if ms and ms > 0:
@@ -62,6 +94,8 @@ def _timestamp_ms(cap: cv2.VideoCapture, webcam: bool, frame_index: int) -> int:
 
 def calibrate_ground_for_stream(path: str, webcam: bool = True):
     global THUMB_UP, CALIBRATED
+    if not (CV2_AVAILABLE and MP_AVAILABLE and PANDAS_AVAILABLE):
+        raise RuntimeError("calibrate_ground_for_stream requires opencv, mediapipe, and pandas.")
 
     logging.info("Starting calibration...")
 

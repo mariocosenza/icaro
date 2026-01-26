@@ -1,9 +1,13 @@
-import unittest
-from unittest.mock import MagicMock, patch
-import asyncio
-import numpy as np
+import importlib.util
 import os
 import sys
+import unittest
+from unittest.mock import MagicMock, patch
+
+import numpy as np
+
+HAS_MEDIAPIPE = importlib.util.find_spec("mediapipe") is not None
+HAS_CV2 = importlib.util.find_spec("cv2") is not None
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT not in sys.path:
@@ -19,10 +23,12 @@ sys.modules['firebase_admin.messaging'] = MagicMock()
 sys.modules['joblib'] = MagicMock()
 
 from src.pose_landmark import (
-    _resolve_width, _resize_frame, _mp_image_from_bgr, 
+    _resolve_width, _resize_frame, _mp_image_from_bgr,
     _timestamp_live, _timestamp_video, PoseConfig, _make_detector
 )
 
+
+@unittest.skipUnless(HAS_MEDIAPIPE and HAS_CV2, "mediapipe/cv2 not installed")
 class TestPoseLandmark(unittest.TestCase):
 
     def test_resolve_width(self):

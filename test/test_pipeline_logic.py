@@ -1,9 +1,14 @@
-import unittest
-from unittest.mock import MagicMock, patch
-import numpy as np
-import pandas as pd
+import importlib.util
 import os
 import sys
+import unittest
+from unittest.mock import MagicMock
+
+import numpy as np
+
+HAS_PANDAS = importlib.util.find_spec("pandas") is not None
+if HAS_PANDAS:
+    pass
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT not in sys.path:
@@ -13,11 +18,13 @@ if SRC not in sys.path:
     sys.path.insert(0, SRC)
 
 from src.pipeline_horizontal_classification import (
-    _proba_pos, iter_video_entries, build_df_from_any_json, 
-    _supports_sample_weight, _binary_class_weight, make_hgb, make_mlp, 
-    VideoSample, windowize_last_label
+    _proba_pos, iter_video_entries, build_df_from_any_json,
+    _supports_sample_weight, _binary_class_weight, make_hgb, make_mlp,
+    windowize_last_label
 )
 
+
+@unittest.skipUnless(HAS_PANDAS, "pandas not installed")
 class TestPipelineHorizontalClassification(unittest.TestCase):
 
     def test_proba_pos(self):
@@ -27,7 +34,8 @@ class TestPipelineHorizontalClassification(unittest.TestCase):
         np.testing.assert_array_almost_equal(res, [0.8, 0.3])
 
     def test_iter_video_entries(self):
-        data = [{"name": "v1", "start": 0, "end": 10, "data": [1, 2]}, {"name": "v2", "start": 0, "end": 10, "data": [3, 4]}]
+        data = [{"name": "v1", "start": 0, "end": 10, "data": [1, 2]},
+                {"name": "v2", "start": 0, "end": 10, "data": [3, 4]}]
         it = iter_video_entries(data)
         self.assertEqual(next(it)["name"], "v1")
         self.assertEqual(next(it)["name"], "v2")
@@ -69,7 +77,6 @@ class TestPipelineHorizontalClassification(unittest.TestCase):
         self.assertEqual(y[0], 0)
         self.assertEqual(y[1], 1)
 
-from unittest.mock import MagicMock
 
 if __name__ == "__main__":
     unittest.main()

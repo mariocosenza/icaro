@@ -1,6 +1,22 @@
-import cv2
+from __future__ import annotations
+
 import numpy as np
-import mediapipe as mp
+
+try:
+    import cv2
+
+    CV2_AVAILABLE = True
+except ModuleNotFoundError:
+    cv2 = None
+    CV2_AVAILABLE = False
+
+try:
+    import mediapipe as mp
+
+    MP_AVAILABLE = True
+except ModuleNotFoundError:
+    mp = None
+    MP_AVAILABLE = False
 
 # MediaPipe Pose connections as index pairs (no mp.solutions needed)
 POSE_CONNECTIONS = [
@@ -24,6 +40,8 @@ POSE_CONNECTIONS = [
 
 
 def _fit_to_screen(bgr: np.ndarray, max_w: int = 1280, max_h: int = 720) -> np.ndarray:
+    if not CV2_AVAILABLE:
+        raise RuntimeError("OpenCV (cv2) is required for drawing.")
     h, w = bgr.shape[:2]
     scale = min(max_w / w, max_h / h, 1.0)  # never upscale
     if scale < 1.0:
@@ -33,13 +51,13 @@ def _fit_to_screen(bgr: np.ndarray, max_w: int = 1280, max_h: int = 720) -> np.n
 
 
 def draw_pose_points(
-    mp_image: mp.Image,
-    detection_result,
-    window_name: str = "Pose",
-    max_w: int = 1280,
-    max_h: int = 720,
-    wait_ms: int = 1,          # 0 = block (single image), 1/10/33 = video/live
-    close_key: str = "q",      # press to close window
+        mp_image: mp.Image,
+        detection_result,
+        window_name: str = "Pose",
+        max_w: int = 1280,
+        max_h: int = 720,
+        wait_ms: int = 1,  # 0 = block (single image), 1/10/33 = video/live
+        close_key: str = "q",  # press to close window
 ) -> bool:
     """
     Draw pose + show it in a resizable window.
@@ -49,6 +67,10 @@ def draw_pose_points(
         True  -> continue
         False -> user requested close (pressed close_key or window closed)
     """
+    if not CV2_AVAILABLE:
+        raise RuntimeError("OpenCV (cv2) is required for drawing.")
+    if not MP_AVAILABLE:
+        raise RuntimeError("MediaPipe is required for drawing.")
     # mp.Image -> numpy RGB (HxWx3)
     rgb = mp_image.numpy_view()
     if rgb.dtype != np.uint8:

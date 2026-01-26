@@ -1,9 +1,19 @@
+from __future__ import annotations
+
 import asyncio
 import logging
 from datetime import datetime
+from typing import Any
 
-import mediapipe as mp
-from mediapipe.tasks.python.vision.pose_landmarker import PoseLandmarkerResult
+try:
+    import mediapipe as mp
+    from mediapipe.tasks.python.vision.pose_landmarker import PoseLandmarkerResult
+
+    MP_AVAILABLE = True
+except ModuleNotFoundError:
+    mp = None
+    PoseLandmarkerResult = Any
+    MP_AVAILABLE = False
 
 from drawing import draw_pose_points
 from live_fall_detector import LiveManDownDetector, DetectorConfig, MultiPersonDetector
@@ -68,9 +78,9 @@ def _now_str() -> str:
 
 def _is_no_movement() -> bool:
     return (
-        LatestMovement.X < 0.5 and
-        LatestMovement.Y < 0.8 and
-        LatestMovement.Z < 0.8
+            LatestMovement.X < 0.5 and
+            LatestMovement.Y < 0.8 and
+            LatestMovement.Z < 0.8
     )
 
 
@@ -117,11 +127,11 @@ def _maybe_notify_heartbeat(no_movement: bool, abnormal_hr: bool) -> None:
 
 
 def _handle_disabled_state(
-    result: PoseLandmarkerResult,
-    frame_landmarks,
-    timestamp_ms: int,
-    no_movement: bool,
-    abnormal_hr: bool,
+        result: PoseLandmarkerResult,
+        frame_landmarks,
+        timestamp_ms: int,
+        no_movement: bool,
+        abnormal_hr: bool,
 ) -> bool:
     global _detector_enabled, _detector_disabled_until_ms
 
@@ -192,7 +202,8 @@ def classify_live(result: PoseLandmarkerResult, image: mp.Image, timestamp_ms: i
     no_movement = _is_no_movement()
     abnormal_hr = _is_abnormal_hr()
 
-    if not _detector_enabled and _handle_disabled_state(result, frame_landmarks, timestamp_ms, no_movement, abnormal_hr):
+    if not _detector_enabled and _handle_disabled_state(result, frame_landmarks, timestamp_ms, no_movement,
+                                                        abnormal_hr):
         return
 
     outputs = _detector.update(frame_landmarks)
@@ -213,6 +224,7 @@ def classify_live(result: PoseLandmarkerResult, image: mp.Image, timestamp_ms: i
 
 
 bundle = load_models("../data/icaro_models.joblib")
+
 
 def _make_detector_instance() -> LiveManDownDetector:
     return LiveManDownDetector(

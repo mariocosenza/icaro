@@ -1,21 +1,54 @@
-import logging
-import json
-from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
 import inspect
+import json
+import logging
+from dataclasses import dataclass
+from typing import Any, Dict, Iterable, List, Optional, Tuple, Union, TYPE_CHECKING, TypeAlias
+
 import numpy as np
-import pandas as pd
-import joblib
+
+try:
+    import pandas as pd
+
+    PANDAS_AVAILABLE = True
+except ModuleNotFoundError:
+    pd = None
+    PANDAS_AVAILABLE = False
+try:
+    import joblib
+
+    JOBLIB_AVAILABLE = True
+except ModuleNotFoundError:
+    joblib = None
+    JOBLIB_AVAILABLE = False
 
 from util_landmarks import BodyLandmark
 
-from sklearn.ensemble import HistGradientBoostingClassifier
-from sklearn.neural_network import MLPClassifier
-from sklearn.impute import SimpleImputer
-from sklearn.model_selection import GroupKFold, GroupShuffleSplit, RandomizedSearchCV
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import classification_report, confusion_matrix, f1_score
+try:
+    from sklearn.ensemble import HistGradientBoostingClassifier
+    from sklearn.neural_network import MLPClassifier
+    from sklearn.impute import SimpleImputer
+    from sklearn.model_selection import GroupKFold, GroupShuffleSplit, RandomizedSearchCV
+    from sklearn.pipeline import Pipeline
+    from sklearn.preprocessing import StandardScaler
+    from sklearn.metrics import classification_report, confusion_matrix, f1_score
+
+    SKLEARN_AVAILABLE = True
+except ModuleNotFoundError:
+    SKLEARN_AVAILABLE = False
+    HistGradientBoostingClassifier = None
+    MLPClassifier = None
+    SimpleImputer = None
+    GroupKFold = None
+    GroupShuffleSplit = None
+    RandomizedSearchCV = None
+    StandardScaler = None
+    classification_report = None
+    confusion_matrix = None
+    f1_score = None
+    if TYPE_CHECKING:
+        from sklearn.pipeline import Pipeline
+    else:
+        Pipeline = Any
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -32,6 +65,11 @@ PoseCell = List[Dict[str, float]]
 Pose33 = PoseCell
 
 
+def _require_sklearn() -> None:
+    if not SKLEARN_AVAILABLE:
+        raise RuntimeError("scikit-learn is required for training. Install it to use this function.")
+
+
 def _proba_pos(est: Any, X: np.ndarray) -> np.ndarray:
     """Helper to get positive class probabilities safely."""
     if hasattr(est, "predict_proba"):
@@ -41,12 +79,30 @@ def _proba_pos(est: Any, X: np.ndarray) -> np.ndarray:
     return est.predict(X)
 
 
+if TYPE_CHECKING:
+    import pandas as pd  # noqa: F401
+
+    DataFrameType: TypeAlias = pd.DataFrame
+else:
+    DataFrameType: TypeAlias = Any
+
+
 @dataclass
 class VideoSample:
     name: str
     start: int
     end: int
-    df: pd.DataFrame
+    df: DataFrameType
+
+
+def _require_pandas() -> None:
+    if not PANDAS_AVAILABLE:
+        raise RuntimeError("pandas is required for dataset loading/training. Install it to use this function.")
+
+
+def _require_joblib() -> None:
+    if not JOBLIB_AVAILABLE:
+        raise RuntimeError("joblib is required for model persistence. Install it to use this function.")
 
 
 def iter_video_entries(obj: Any) -> Iterable[Dict[str, Any]]:
@@ -60,7 +116,8 @@ def iter_video_entries(obj: Any) -> Iterable[Dict[str, Any]]:
             yield from iter_video_entries(v)
 
 
-def build_df_from_any_json(data: Any) -> pd.DataFrame:
+def build_df_from_any_json(data: Any) -> DataFrameType:
+    _require_pandas()
     if data is None:
         raise ValueError("data is None")
 
@@ -108,6 +165,7 @@ def build_df_from_any_json(data: Any) -> pd.DataFrame:
 
 
 def load_dataset_from_json_obj(dataset_obj: Any) -> List[VideoSample]:
+    _require_pandas()
     videos: List[VideoSample] = []
     for entry in iter_video_entries(dataset_obj):
         if entry.get("data") is None or entry.get("start") is None or entry.get("end") is None:
@@ -122,7 +180,7 @@ def load_dataset_from_json_obj(dataset_obj: Any) -> List[VideoSample]:
     return videos
 
 
-def _infer_step(df: pd.DataFrame) -> int:
+def _infer_step(df: DataFrameType) -> int:
     fi = np.asarray(df["frame_index"].values, dtype=int)
     if len(fi) < 3:
         return 2
@@ -272,6 +330,7 @@ def windowize_last_label(
 
 
 def make_hgb(random_state: int) -> Pipeline:
+    _require_sklearn()
     return Pipeline(
         [
             ("imputer", SimpleImputer(strategy="median")),
@@ -287,6 +346,7 @@ def make_hgb(random_state: int) -> Pipeline:
 
 
 def make_mlp(random_state: int) -> Pipeline:
+    _require_sklearn()
     return Pipeline(
         [
             ("imputer", SimpleImputer(strategy="median")),
@@ -659,6 +719,7 @@ def _fit_search(
         n_iter: int,
         random_state: int,
 ) -> Pipeline:
+    _require_sklearn()
     cv = GroupKFold(n_splits=5)
     search = RandomizedSearchCV(
         base,
@@ -690,6 +751,7 @@ def train_binary_model_random_search_best_of_two(
         n_iter_search: int = 30,
         scoring: str = "f1",
 ) -> Pipeline:
+    _require_sklearn()
     tr, te = _pick_split_binary(X, y, groups, test_size=test_size, random_state=random_state)
 
     X_train, y_train, g_train, q_train = X[tr], y[tr], groups[tr], quality_w[tr]
@@ -790,6 +852,8 @@ def train_and_save_models(
         random_state: int = 42,
         n_iter_search: int = 30,
 ) -> Dict[str, Any]:
+    _require_sklearn()
+    _require_joblib()
     videos = load_dataset_from_json_obj(dataset_obj)
     pose_col = "pose_world_landmarks" if use_world else "pose_landmarks"
 
@@ -862,6 +926,7 @@ def train_and_save_models(
 
 
 def load_models(path: str = "./data/icaro_models.joblib") -> Dict[str, Any]:
+    _require_joblib()
     return joblib.load(path)
 
 

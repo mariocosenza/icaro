@@ -1,8 +1,13 @@
+import importlib.util
 import os
 import sys
 import unittest
+
 import numpy as np
-import pandas as pd
+
+HAS_PANDAS = importlib.util.find_spec("pandas") is not None
+if HAS_PANDAS:
+    import pandas as pd
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT not in sys.path:
@@ -14,6 +19,7 @@ if SRC not in sys.path:
 from src.pipeline_horizontal_classification import select_best_pose, _infer_step, window_vector_nan
 
 
+@unittest.skipUnless(HAS_PANDAS, "pandas not installed")
 class TestPipelineHelpers(unittest.TestCase):
     def test_select_best_pose_prefers_highest_score(self):
         low_pose = [{"visibility": 0.1, "presence": 0.1, "x": 0.0, "y": 0.0} for _ in range(33)]
