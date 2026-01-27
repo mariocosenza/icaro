@@ -46,9 +46,10 @@ class LatestMovement:
 
 
 
-async def trigger_buzzer():
+async def trigger_buzzer() -> bool:
     """
     Sends a request to the Raspberry Pi server to trigger the buzzer.
+    Returns True if successful, False otherwise.
     """
     if RASPBERRY_PI_HOST.startswith("http://") or RASPBERRY_PI_HOST.startswith("https://"):
         # Treat as full base URL
@@ -61,8 +62,10 @@ async def trigger_buzzer():
         async with httpx.AsyncClient(timeout=2.0) as client:
             await client.post(url, json={"message": "FALL DETECTED", "duration": 5.0})
             logging.info(f"Successfully triggered buzzer at {url}")
+            return True
     except Exception as e:
         logging.error(f"Failed to trigger buzzer at {url}: {e}")
+        return False
 
 
 async def stop_buzzer():
@@ -85,24 +88,32 @@ async def stop_buzzer():
 
 
 async def send_push_notification(title, body):
-    message = messaging.Message(
-        notification=messaging.Notification(
-            title=title,
-            body=body,
-        ),
-        topic="fall",
-    )
-    messaging.send(messaging.Message(
-        data={
-            "action": "FALL_DETECTED",
-            "urgency": "high"
-        },
-        topic="fall",
-    ))
-    response = messaging.send(message)
-    logging.info(f"Successfully sent message: {response}")
-
     await trigger_buzzer()
+
+
+    try:
+        # Send data message first
+        messaging.send(messaging.Message(
+            data={
+                "action": "FALL_DETECTED",
+                "urgency": "high"
+            },
+            topic="fall",
+        ))
+        
+        # Send notification message
+        message = messaging.Message(
+            notification=messaging.Notification(
+                title=title,
+                body=body,
+            ),
+            topic="fall",
+        )
+        response = messaging.send(message)
+        logging.info(f"Successfully sent Firebase message: {response}")
+        
+    except Exception as e:
+        logging.error(f"Firebase notification failed: {e}")
 
 
 async def send_push_notification_heartbeat():
