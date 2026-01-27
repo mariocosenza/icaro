@@ -9,10 +9,10 @@ from fastapi import FastAPI, File, HTTPException, UploadFile
 from mediapipe.tasks.python import vision
 from starlette.middleware.cors import CORSMiddleware
 
-from classify_live import set_main_loop
+from classify_live import set_main_loop, reset_detector_state
 from mongodb import get_all_data_from_mongo_db
 from pose_landmark import run_pose_async
-from push_notification import LatestHeartbeat, LatestMovement, set_raspberry_pi_ip, get_raspberry_pi_ip
+from push_notification import LatestHeartbeat, LatestMovement, set_raspberry_pi_address, get_raspberry_pi_address, stop_buzzer
 
 log = logging.getLogger("uvicorn.error")
 
@@ -58,6 +58,10 @@ async def _start_pipeline_if_needed() -> None:
             return
 
         _stop_event = asyncio.Event()
+        
+        # Reset detector state (tracks, flags) before starting
+        reset_detector_state()
+        
         _task = asyncio.create_task(
             run_pose_async(
                 path=VIDEO_PATH,
@@ -162,7 +166,18 @@ async def start_pipeline():
 @app.post("/api/v1/stop")
 async def stop_pipeline():
     await _stop_pipeline_if_running()
+    # Resetting state on stop ensures next start is clean
+    reset_detector_state()
     return {"ok": True, "running": _is_running()}
+
+
+@app.post("/api/v1/stop/buzzer")
+async def stop_buzzer_endpoint():
+    """
+    Stops the buzzer on the Raspberry Pi.
+    """
+    await stop_buzzer()
+    return {"ok": True}
 
 
 @app.post("/api/v1/upload")
@@ -256,17 +271,17 @@ async def set_quality(quality_level: str):
 
 
 @app.patch("/api/v1/raspberry-ip")
-async def update_raspberry_pi_ip_endpoint(ip: str):
+async def update_raspberry_pi_address_endpoint(address: str):
     """
-    Update the Raspberry Pi IP address.
-    Query parameter 'ip' is used.
+    Update the Raspberry Pi Address (IP or Domain).
+    Query parameter 'address' is used.
     """
-    if not ip:
-         raise HTTPException(status_code=400, detail="IP address is required")
+    if not address:
+         raise HTTPException(status_code=400, detail="Address is required")
     
-    set_raspberry_pi_ip(ip)
+    set_raspberry_pi_address(address)
     
     return {
         "ok": True,
-        "raspberry_pi_ip": get_raspberry_pi_ip()
+        "raspberry_pi_address": get_raspberry_pi_address()
     }

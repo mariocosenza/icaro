@@ -4,3 +4,4 @@ gpiozero
 python-dotenv
 pytest
 httpx
+RPi.GPIO

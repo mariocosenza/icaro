@@ -39,9 +39,23 @@ _detector_disabled_until_ms = 0
 _loop: asyncio.AbstractEventLoop | None = None
 
 
+
 def set_main_loop(loop: asyncio.AbstractEventLoop) -> None:
     global _loop
     _loop = loop
+
+
+def reset_detector_state() -> None:
+    global _detector_enabled, _detector_disabled_until_ms, _detector
+    _detector_enabled = True
+    _detector_disabled_until_ms = 0
+    LatestHeartbeat.NOTIED_FALL = False
+    
+    if _detector is not None:
+        _detector.tracks.clear()
+        _detector._frame_idx = 0
+    
+    log.info("Detector state reset.")
 
 
 def _schedule(coro) -> None:

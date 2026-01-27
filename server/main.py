@@ -31,6 +31,8 @@ async def lifespan(app: FastAPI):
     stop_event = asyncio.Event()
 
     try:
+        # Force using RPi.GPIO since we installed it and want to avoid fallback warnings
+        os.environ["GPIOZERO_PIN_FACTORY"] = "RPiGPIO"
         from gpiozero import Buzzer
         
         # Check if we are running on a Pi
@@ -72,9 +74,10 @@ async def continuous_buzz():
     try:
         while not stop_event.is_set():
             if has_gpio and buzzer:
+                logger.info(f"Buzzer ON (Pin {BUZZER_PIN})")
                 buzzer.on()
             else:
-                logger.info("[MOCK] BEEP")
+                logger.info("[MOCK] BEEP ON")
             
             # Beep ON duration
             try:
@@ -84,7 +87,10 @@ async def continuous_buzz():
                 pass
 
             if has_gpio and buzzer:
+                logger.info(f"Buzzer OFF (Pin {BUZZER_PIN})")
                 buzzer.off()
+            else:
+                logger.info("[MOCK] BEEP OFF")
             
             # Beep OFF duration
             try:

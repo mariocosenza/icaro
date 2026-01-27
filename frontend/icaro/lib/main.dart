@@ -16,9 +16,7 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  await Firebase.initializeApp(
-    options: DefaultFirebaseOptions.currentPlatform,
-  );
+  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
 
   FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
 
@@ -193,10 +191,13 @@ class _AlertsPageState extends State<AlertsPage> {
 
   String get _endpoint {
     final normalized = _normalizeBackendHost(_backendHost);
-    final base = normalized.startsWith("http://") || normalized.startsWith("https://")
+    final base =
+        normalized.startsWith("http://") || normalized.startsWith("https://")
         ? normalized
         : "http://$normalized";
-    final trimmedBase = base.endsWith("/") ? base.substring(0, base.length - 1) : base;
+    final trimmedBase = base.endsWith("/")
+        ? base.substring(0, base.length - 1)
+        : base;
     return "$trimmedBase/api/v1/alerts";
   }
 
@@ -333,91 +334,125 @@ class _AlertsPageState extends State<AlertsPage> {
         "${two(local.hour)}:${two(local.minute)}:${two(local.second)}";
   }
 
+  Future<void> _stopBuzzer() async {
+    try {
+      // Construct endpoint manually or based on _endpoint logic
+      final normalized = _normalizeBackendHost(_backendHost);
+      final base =
+          normalized.startsWith("http://") || normalized.startsWith("https://")
+          ? normalized
+          : "http://$normalized";
+      final trimmedBase = base.endsWith("/")
+          ? base.substring(0, base.length - 1)
+          : base;
+      final url = Uri.parse("$trimmedBase/api/v1/stop/buzzer");
+
+      final res = await http.post(url);
+
+      if (res.statusCode < 200 || res.statusCode >= 300) {
+        throw Exception("HTTP ${res.statusCode}");
+      }
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("Buzzer stopped"),
+          backgroundColor: Colors.green,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text("Failed to stop buzzer: $e"),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final body = _loading
         ? const Center(child: CircularProgressIndicator())
         : _error != null
-            ? Center(
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        "Error:\n$_error",
-                        textAlign: TextAlign.center,
+        ? Center(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text("Error:\n$_error", textAlign: TextAlign.center),
+                  const SizedBox(height: 12),
+                  ElevatedButton(onPressed: _load, child: const Text("Retry")),
+                ],
+              ),
+            ),
+          )
+        : _items.isEmpty
+        ? const Center(child: Text("No alerts"))
+        : ListView.separated(
+            physics: const AlwaysScrollableScrollPhysics(),
+            itemCount: _items.length,
+            separatorBuilder: (_, __) => const Divider(height: 1),
+            itemBuilder: (context, index) {
+              final item = _items[index];
+              final icon = item.alert
+                  ? Icons.error_outline
+                  : Icons.warning_amber_outlined;
+              final color = item.alert ? Colors.red : Colors.orange;
+
+              return Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 6,
+                ),
+                child: Card(
+                  elevation: 0,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    side: BorderSide(color: color.withOpacity(0.35)),
+                  ),
+                  child: ListTile(
+                    leading: Container(
+                      width: 42,
+                      height: 42,
+                      decoration: BoxDecoration(
+                        color: color.withOpacity(0.15),
+                        shape: BoxShape.circle,
                       ),
-                      const SizedBox(height: 12),
-                      ElevatedButton(
-                        onPressed: _load,
-                        child: const Text("Retry"),
-                      ),
-                    ],
+                      child: Icon(icon, color: color),
+                    ),
+                    title: Text(
+                      item.title.isEmpty ? "(no title)" : item.title,
+                      style: const TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                    subtitle: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(item.message),
+                        const SizedBox(height: 4),
+                        Text(
+                          _formatTimestamp(item.timestamp),
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                      ],
+                    ),
                   ),
                 ),
-              )
-            : _items.isEmpty
-                ? const Center(child: Text("No alerts"))
-                : ListView.separated(
-                    physics: const AlwaysScrollableScrollPhysics(),
-                    itemCount: _items.length,
-                    separatorBuilder: (_, __) => const Divider(height: 1),
-                    itemBuilder: (context, index) {
-                      final item = _items[index];
-                      final icon = item.alert
-                          ? Icons.error_outline
-                          : Icons.warning_amber_outlined;
-                      final color = item.alert ? Colors.red : Colors.orange;
-
-                      return Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 6,
-                        ),
-                        child: Card(
-                          elevation: 0,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                            side: BorderSide(color: color.withOpacity(0.35)),
-                          ),
-                          child: ListTile(
-                            leading: Container(
-                              width: 42,
-                              height: 42,
-                              decoration: BoxDecoration(
-                                color: color.withOpacity(0.15),
-                                shape: BoxShape.circle,
-                              ),
-                              child: Icon(icon, color: color),
-                            ),
-                            title: Text(
-                              item.title.isEmpty ? "(no title)" : item.title,
-                              style: const TextStyle(
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                            subtitle: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(item.message),
-                                const SizedBox(height: 4),
-                                Text(
-                                  _formatTimestamp(item.timestamp),
-                                  style: Theme.of(context).textTheme.bodySmall,
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      );
-                    },
-                  );
+              );
+            },
+          );
 
     return Scaffold(
       appBar: AppBar(
         title: const Text("Fall alerts"),
         actions: [
+          IconButton(
+            onPressed: _stopBuzzer,
+            icon: const Icon(Icons.volume_off),
+            tooltip: "Stop Buzzer",
+          ),
           IconButton(
             onPressed: _load,
             icon: const Icon(Icons.refresh),
@@ -425,10 +460,7 @@ class _AlertsPageState extends State<AlertsPage> {
           ),
         ],
       ),
-      body: RefreshIndicator(
-        onRefresh: _onRefresh,
-        child: body,
-      ),
+      body: RefreshIndicator(onRefresh: _onRefresh, child: body),
     );
   }
 }

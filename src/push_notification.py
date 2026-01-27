@@ -18,16 +18,17 @@ def resolve_hostname_or_default(hostname: str, default_ip: str) -> str:
         logging.warning(f"Could not resolve {hostname}, using fallback: {default_ip}")
         return default_ip
 
-RASPBERRY_PI_IP = resolve_hostname_or_default("raspberrypi6", os.getenv("RASPBERRY_PI_IP", "127.0.0.1"))
-logging.info(f"Initial Raspberry Pi IP: {RASPBERRY_PI_IP}")
 
-def set_raspberry_pi_ip(ip: str):
-    global RASPBERRY_PI_IP
-    RASPBERRY_PI_IP = ip
-    logging.info(f"Raspberry Pi IP updated to: {RASPBERRY_PI_IP}")
+RASPBERRY_PI_HOST = resolve_hostname_or_default("raspberrypi6", os.getenv("RASPBERRY_PI_IP", "127.0.0.1"))
+logging.info(f"Initial Raspberry Pi Address: {RASPBERRY_PI_HOST}")
 
-def get_raspberry_pi_ip() -> str:
-    return RASPBERRY_PI_IP
+def set_raspberry_pi_address(address: str):
+    global RASPBERRY_PI_HOST
+    RASPBERRY_PI_HOST = address
+    logging.info(f"Raspberry Pi Address updated to: {RASPBERRY_PI_HOST}")
+
+def get_raspberry_pi_address() -> str:
+    return RASPBERRY_PI_HOST
 
 cred = credentials.Certificate("../data/account/serviceAccountKey.json")
 firebase_admin.initialize_app(cred)
@@ -44,17 +45,43 @@ class LatestMovement:
     Z: float = 0
 
 
+
 async def trigger_buzzer():
     """
     Sends a request to the Raspberry Pi server to trigger the buzzer.
     """
-    url = f"http://{RASPBERRY_PI_IP}:8000/alert"
+    if RASPBERRY_PI_HOST.startswith("http://") or RASPBERRY_PI_HOST.startswith("https://"):
+        # Treat as full base URL
+        url = f"{RASPBERRY_PI_HOST}/alert"
+    else:
+        # Treat as hostname/IP, assume HTTP and port 8080
+        url = f"http://{RASPBERRY_PI_HOST}:8080/alert"
+        
     try:
         async with httpx.AsyncClient(timeout=2.0) as client:
             await client.post(url, json={"message": "FALL DETECTED", "duration": 5.0})
             logging.info(f"Successfully triggered buzzer at {url}")
     except Exception as e:
         logging.error(f"Failed to trigger buzzer at {url}: {e}")
+
+
+async def stop_buzzer():
+    """
+    Sends a request to the Raspberry Pi server to stop the buzzer.
+    """
+    if RASPBERRY_PI_HOST.startswith("http://") or RASPBERRY_PI_HOST.startswith("https://"):
+        # Treat as full base URL
+        url = f"{RASPBERRY_PI_HOST}/stop"
+    else:
+        # Treat as hostname/IP, assume HTTP and port 8080
+        url = f"http://{RASPBERRY_PI_HOST}:8080/stop"
+
+    try:
+        async with httpx.AsyncClient(timeout=2.0) as client:
+            await client.post(url)
+            logging.info(f"Successfully stopped buzzer at {url}")
+    except Exception as e:
+        logging.error(f"Failed to stop buzzer at {url}: {e}")
 
 
 async def send_push_notification(title, body):

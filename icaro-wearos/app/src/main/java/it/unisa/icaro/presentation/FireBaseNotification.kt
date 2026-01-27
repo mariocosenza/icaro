@@ -24,7 +24,7 @@ class FirebaseNotificationService : FirebaseMessagingService() {
     private val serviceScope = CoroutineScope(serviceJob + Dispatchers.Default)
 
     // List of target IPs for redundancy
-    private val targetIps = listOf("192.168.1.15", "192.168.1.65")
+    private val targetIps = listOf("192.168.1.15", "192.168.27.66")
 
     override fun onMessageReceived(message: RemoteMessage) {
         super.onMessageReceived(message)
@@ -61,8 +61,20 @@ class FirebaseNotificationService : FirebaseMessagingService() {
             }
 
             // 2. Sound
-            val notificationUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+            // Try Alarm sound first (more intrusive), then Notification
+            var notificationUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
+            if (notificationUri == null) {
+                 notificationUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+            }
+            
             val ringtone = RingtoneManager.getRingtone(applicationContext, notificationUri)
+            
+            // Set attributes to ensure it plays loudly
+             ringtone.audioAttributes = android.media.AudioAttributes.Builder()
+                .setUsage(android.media.AudioAttributes.USAGE_ALARM)
+                .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                .build()
+                
             ringtone.play()
 
         } catch (e: Exception) {
