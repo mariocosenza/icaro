@@ -15,6 +15,8 @@ ICARO (Industrial Collision & Analysis Recognition Observer) is a human safety s
 - MediaPipe pose landmark ingestion (video file or live stream) with per-person tracking.
 - FastAPI service exposing control/status endpoints and video upload.
 - Notification hooks and MongoDB logging for alerts and vitals (heartbeat, movement).
+- Notification hooks and MongoDB logging for alerts and vitals (heartbeat, movement).
+- Raspberry Pi Buzzer Server: A module to control a physical buzzer on a Raspberry Pi for auditory alerts.
 - Cross-platform clients: Flutter mobile app (frontend/icaro) and Kotlin Wear OS companion (icaro-wearos).
 
 ## Repository Layout
@@ -22,6 +24,8 @@ ICARO (Industrial Collision & Analysis Recognition Observer) is a human safety s
 - `data/` – Pose landmark models and sample videos (archive/), calibration outputs, joblib classifiers.
 - `frontend/icaro/` – Flutter app for monitoring and alerting.
 - `icaro-wearos/` – Kotlin Wear OS project for wrist-worn alerts/telemetry.
+- `icaro-wearos/` – Kotlin Wear OS project for wrist-worn alerts/telemetry.
+- `server/` – Raspberry Pi buzzer server (FastAPI + GPIO).
 - `test/` – Unit tests for detectors and helpers.
 
 ## Backend (FastAPI + MediaPipe)
@@ -47,7 +51,16 @@ uvicorn src.app:app --reload                    # start API
 - `POST /api/v1/upload` – Upload a video to run detection.
 - `POST /api/v1/measure/{heartbeat}` – Push latest BPM.
 - `POST /api/v1/monitor/{x}-{y}-{z}` – Push latest motion vector.
+- `POST /api/v1/monitor/{x}-{y}-{z}` – Push latest motion vector.
 - `GET /api/v1/alerts` – Retrieve stored alerts.
+- `PATCH /api/v1/quality/{quality_level}` – Set video processing resolution (`low`, `medium`, `high`).
+- `PATCH /api/v1/raspberry-ip` – Update the target IP for the Raspberry Pi buzzer.
+
+### Raspberry Pi Buzzer Server (`server/`)
+A lightweight FastAPI server running on a Raspberry Pi to provide auditory feedback.
+- **Endpoints**: `POST /alert` (start buzzer), `POST /stop` (stop buzzer).
+- **Setup**: Copy `server/` to Pi, install requirements, and optionally configure the systemd service.
+- **Integration**: The main backend sends requests to this server when a fall is detected.
 
 ## Flutter Mobile App (frontend/icaro)
 - Built with Flutter; Firebase config present under `frontend/icaro/android/app/google-services.json` and `firebase.json`.

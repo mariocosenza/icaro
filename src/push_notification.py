@@ -10,6 +10,14 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 RASPBERRY_PI_IP = os.getenv("RASPBERRY_PI_IP", "127.0.0.1")
 
+def set_raspberry_pi_ip(ip: str):
+    global RASPBERRY_PI_IP
+    RASPBERRY_PI_IP = ip
+    logging.info(f"Raspberry Pi IP updated to: {RASPBERRY_PI_IP}")
+
+def get_raspberry_pi_ip() -> str:
+    return RASPBERRY_PI_IP
+
 cred = credentials.Certificate("../data/account/serviceAccountKey.json")
 firebase_admin.initialize_app(cred)
 

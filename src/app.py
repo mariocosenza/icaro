@@ -12,7 +12,7 @@ from starlette.middleware.cors import CORSMiddleware
 from classify_live import set_main_loop
 from mongodb import get_all_data_from_mongo_db
 from pose_landmark import run_pose_async
-from push_notification import LatestHeartbeat, LatestMovement
+from push_notification import LatestHeartbeat, LatestMovement, set_raspberry_pi_ip, get_raspberry_pi_ip
 
 log = logging.getLogger("uvicorn.error")
 
@@ -24,6 +24,7 @@ DEFAULT_VIDEO_PATH = BASE_DIR / "../data/archive/Coffee_room_01/Coffee_room_01/V
 
 VIDEO_PATH = str(DEFAULT_VIDEO_PATH)
 RUNNING_MODE = vision.RunningMode.VIDEO
+QUALITY = "high"
 
 _task: Optional[asyncio.Task] = None
 _stop_event: Optional[asyncio.Event] = None
@@ -61,7 +62,7 @@ async def _start_pipeline_if_needed() -> None:
             run_pose_async(
                 path=VIDEO_PATH,
                 running_mode=RUNNING_MODE,
-                quality="high",
+                quality=QUALITY,
                 stop_event=_stop_event,
             )
         )
@@ -230,4 +231,42 @@ async def set_running_mode_video():
         "running_mode": RUNNING_MODE.name,
         "active_video_path": VIDEO_PATH,
         "running": _is_running(),
+    }
+
+
+@app.patch("/api/v1/quality/{quality_level}")
+async def set_quality(quality_level: str):
+    global QUALITY
+    
+    if quality_level not in {"low", "medium", "high"}:
+         raise HTTPException(status_code=400, detail="Invalid quality. Options: low, medium, high")
+
+    QUALITY = quality_level
+    log.info(f"Quality set to {QUALITY}")
+
+    if _is_running():
+        await _restart_pipeline()
+
+    return {
+        "ok": True,
+        "quality": QUALITY,
+        "active_video_path": VIDEO_PATH,
+        "running": _is_running(),
+    }
+
+
+@app.patch("/api/v1/raspberry-ip")
+async def update_raspberry_pi_ip_endpoint(ip: str):
+    """
+    Update the Raspberry Pi IP address.
+    Query parameter 'ip' is used.
+    """
+    if not ip:
+         raise HTTPException(status_code=400, detail="IP address is required")
+    
+    set_raspberry_pi_ip(ip)
+    
+    return {
+        "ok": True,
+        "raspberry_pi_ip": get_raspberry_pi_ip()
     }

@@ -85,11 +85,11 @@ class TestApp(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
 
     def test_set_running_mode_live_stream(self):
-        response = client.put("/api/v1/running-mode/live-stream")
+        response = client.patch("/api/v1/running-mode/live-stream")
         self.assertEqual(response.status_code, 200)
 
     def test_set_running_mode_video(self):
-        response = client.put("/api/v1/running-mode/video")
+        response = client.patch("/api/v1/running-mode/video")
         self.assertEqual(response.status_code, 200)
 
 
