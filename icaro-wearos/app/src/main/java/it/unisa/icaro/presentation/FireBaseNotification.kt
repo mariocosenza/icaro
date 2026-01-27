@@ -7,6 +7,7 @@ import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
+import android.media.RingtoneManager
 import android.os.VibrationEffect
 import android.os.VibratorManager
 import android.util.Log
@@ -22,13 +23,16 @@ class FirebaseNotificationService : FirebaseMessagingService() {
     private val serviceJob = SupervisorJob()
     private val serviceScope = CoroutineScope(serviceJob + Dispatchers.Default)
 
+    // List of target IPs for redundancy
+    private val targetIps = listOf("192.168.1.15", "192.168.1.65")
+
     override fun onMessageReceived(message: RemoteMessage) {
         super.onMessageReceived(message)
 
         Log.d("FIREBASE_DEBUG", "Message received from: ${message.from}")
         Log.d("FIREBASE_DEBUG", "Data payload: ${message.data}")
 
-        vibrateOnce()
+        notifyUser()
 
         val title = message.notification?.title?.trim().orEmpty()
         val isStartMonitoring = title.equals("Start monitoring", ignoreCase = true)
@@ -46,16 +50,23 @@ class FirebaseNotificationService : FirebaseMessagingService() {
     }
 
     @RequiresPermission(Manifest.permission.VIBRATE)
-    private fun vibrateOnce() {
+    private fun notifyUser() {
         try {
+            // 1. Vibrate
             val vm = getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
             val vibrator = vm.defaultVibrator
 
-            if (!vibrator.hasVibrator()) return
+            if (vibrator.hasVibrator()) {
+                vibrator.vibrate(VibrationEffect.createOneShot(250, VibrationEffect.DEFAULT_AMPLITUDE))
+            }
 
-            vibrator.vibrate(VibrationEffect.createOneShot(250, VibrationEffect.DEFAULT_AMPLITUDE))
+            // 2. Sound
+            val notificationUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+            val ringtone = RingtoneManager.getRingtone(applicationContext, notificationUri)
+            ringtone.play()
+
         } catch (e: Exception) {
-            Log.w("ICARO_SERVICE", "Vibration error", e)
+            Log.w("ICARO_SERVICE", "Notification error (vibration/sound)", e)
         }
     }
 
@@ -148,8 +159,8 @@ class FirebaseNotificationService : FirebaseMessagingService() {
     }
 
     private suspend fun sendHeartRateToApi(meanHeartbeat: Double) = withContext(Dispatchers.IO) {
-        val targetUrl = "http://192.168.1.15:8000/api/v1/measure/${meanHeartbeat.toInt()}"
-        doPost(targetUrl, tag = "ICARO_HEART")
+        val path = "/api/v1/measure/${meanHeartbeat.toInt()}"
+        sendToAllIps(path, "ICARO_HEART")
     }
 
     private suspend fun sendAccelToApi(x: Double, y: Double, z: Double) = withContext(Dispatchers.IO) {
@@ -157,8 +168,21 @@ class FirebaseNotificationService : FirebaseMessagingService() {
         val fy = String.format(java.util.Locale.US, "%.3f", y)
         val fz = String.format(java.util.Locale.US, "%.3f", z)
 
-        val targetUrl = "http://192.168.1.15:8000/api/v1/monitor/$fx-$fy-$fz"
-        doPost(targetUrl, tag = "ICARO_ACCEL")
+        val path = "/api/v1/monitor/$fx-$fy-$fz"
+        sendToAllIps(path, "ICARO_ACCEL")
+    }
+
+    // Try sending to all configured IPs
+    private fun sendToAllIps(path: String, tag: String) {
+        for (ip in targetIps) {
+            val url = "http://$ip:8000$path"
+            try {
+                doPost(url, tag)
+            } catch (e: Exception) {
+                // Log but continue to next IP
+                Log.e("ICARO_SERVICE", "[$tag] Failed to send to $ip: ${e.message}")
+            }
+        }
     }
 
     private fun doPost(url: String, tag: String) {
@@ -180,9 +204,9 @@ class FirebaseNotificationService : FirebaseMessagingService() {
             val body = inputStream?.bufferedReader()?.use { it.readText() } ?: ""
 
             if (responseCode in 200..299) {
-                Log.d("ICARO_SERVICE", "[$tag] Success ($responseCode): $body")
+                Log.d("ICARO_SERVICE", "[$tag] Success ($responseCode) -> $url: $body")
             } else {
-                Log.e("ICARO_SERVICE", "[$tag] Failed ($responseCode): $body")
+                Log.e("ICARO_SERVICE", "[$tag] Failed ($responseCode) -> $url: $body")
             }
         } catch (e: Exception) {
             Log.e("ICARO_SERVICE", "[$tag] Network Error: $url", e)
