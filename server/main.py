@@ -15,21 +15,25 @@ logger = logging.getLogger(__name__)
 
 # Configuration
 BUZZER_PIN = int(os.getenv("BUZZER_PIN", 17))
-BUZZ_DURATION = float(os.getenv("BUZZ_DURATION", 5.0))  # seconds
 
 # Global buzzer instance
 buzzer = None
 has_gpio = False
+buzzer_task = None
+stop_event = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup: Initialize GPIO
-    global buzzer, has_gpio
+    global buzzer, has_gpio, stop_event
+    
+    # Initialize event here to ensure it uses the running event loop
+    stop_event = asyncio.Event()
+
     try:
         from gpiozero import Buzzer
-        from gpiozero.pins.mock import MockFactory
         
-        # Check if we are running on a Pi or need to mock
+        # Check if we are running on a Pi
         try:
            buzzer = Buzzer(BUZZER_PIN)
            has_gpio = True
@@ -44,7 +48,14 @@ async def lifespan(app: FastAPI):
     
     yield
     
-    # Shutdown: Cleanup if needed (gpiozero handles cleanup mostly)
+    # Shutdown: Stop any running buzzer task and cleanup
+    stop_event.set()
+    if buzzer_task:
+        try:
+            await buzzer_task
+        except asyncio.CancelledError:
+            pass
+            
     if buzzer:
         buzzer.close()
 
@@ -52,40 +63,78 @@ app = FastAPI(lifespan=lifespan)
 
 class AlertRequest(BaseModel):
     message: str | None = None
-    duration: float | None = None
 
-async def play_buzzer_pattern(duration: float):
+async def continuous_buzz():
     """
-    Buzzes for the specified duration.
-    Can be enhanced to play patterns (beep-beep-beep).
+    Buzzes continuously until stop_event is set.
     """
-    logger.info(f"Triggering buzzer for {duration} seconds")
-    
-    if has_gpio and buzzer:
-        end_time = asyncio.get_event_loop().time() + duration
-        while asyncio.get_event_loop().time() < end_time:
-            buzzer.on()
-            await asyncio.sleep(15)
+    logger.info("Starting continuous buzzer pattern")
+    try:
+        while not stop_event.is_set():
+            if has_gpio and buzzer:
+                buzzer.on()
+            else:
+                logger.info("[MOCK] BEEP")
+            
+            # Beep ON duration
+            try:
+                await asyncio.wait_for(stop_event.wait(), timeout=0.5)
+                if stop_event.is_set(): break
+            except asyncio.TimeoutError:
+                pass
+
+            if has_gpio and buzzer:
+                buzzer.off()
+            
+            # Beep OFF duration
+            try:
+                await asyncio.wait_for(stop_event.wait(), timeout=0.5)
+            except asyncio.TimeoutError:
+                pass
+                
+    except asyncio.CancelledError:
+        logger.info("Buzzer task cancelled")
+    finally:
+        # Ensure buzzer is off
+        if has_gpio and buzzer:
             buzzer.off()
-            await asyncio.sleep(15)
-    else:
-        logger.info(f"[MOCK] Buzzer ON-OFF pattern for {duration} seconds")
-        await asyncio.sleep(duration)
-    
-    logger.info("Buzzer sequence finished")
+        logger.info("Buzzer stopped")
 
 @app.post("/alert")
-async def trigger_alert(request: AlertRequest, background_tasks: BackgroundTasks):
+async def trigger_alert(request: AlertRequest):
     """
-    Receives an alert request and triggers the buzzer in the background.
+    Triggers the buzzer to run continuously until stopped.
     """
-    duration = request.duration if request.duration is not None else BUZZ_DURATION
-    background_tasks.add_task(play_buzzer_pattern, duration)
-    return {"status": "success", "message": "Alert triggered", "duration": duration}
+    global buzzer_task
+    
+    if buzzer_task and not buzzer_task.done():
+        return {"status": "ignored", "message": "Buzzer already active"}
+    
+    stop_event.clear()
+    buzzer_task = asyncio.create_task(continuous_buzz())
+    return {"status": "success", "message": "Buzzer started"}
+
+@app.post("/stop")
+async def stop_alert():
+    """
+    Stops the buzzer.
+    """
+    global buzzer_task
+    
+    if not buzzer_task or buzzer_task.done():
+         return {"status": "ignored", "message": "Buzzer is not active"}
+
+    stop_event.set()
+    await buzzer_task
+    return {"status": "success", "message": "Buzzer stopped"}
 
 @app.get("/health")
 async def health_check():
-    return {"status": "online", "gpio_active": has_gpio}
+    return {
+        "status": "online", 
+        "gpio_active": has_gpio,
+        "buzzer_active": (buzzer_task is not None and not buzzer_task.done())
+    }
 
 if __name__ == "__main__":
     import uvicorn

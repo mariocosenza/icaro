@@ -8,6 +8,8 @@ This is a lightweight FastAPI server designed to run on a Raspberry Pi to contro
 - Python 3.9+
 - Active Buzzer connected to a GPIO pin (default GPIO 17)
 
+This server runs a continuous buzzer alert that must be manually stopped via a POST request.
+
 ## Installation
 
 1.  **Transfer files**: Copy the `server/` directory to your Raspberry Pi.
@@ -47,9 +49,10 @@ python -m uvicorn main:app --host 0.0.0.0 --port 8000
 
 ## API Endpoints
 
--   `GET /health`: Checks if the server is running and if GPIO is active.
--   `POST /alert`: Triggers the buzzer.
-    -   Body: `{"message": "optional text", "duration": 5.0}`
+-   `GET /health`: Checks status.
+-   `POST /alert`: Triggers the buzzer to run CONTINUOUSLY.
+    -   Body: `{"message": "optional text"}`
+-   `POST /stop`: Stops the buzzer.
 
 ## Testing
 
