@@ -5,10 +5,21 @@ from firebase_admin import credentials, messaging
 
 import os
 import httpx
+import socket
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-RASPBERRY_PI_IP = os.getenv("RASPBERRY_PI_IP", "127.0.0.1")
+def resolve_hostname_or_default(hostname: str, default_ip: str) -> str:
+    try:
+        ip = socket.gethostbyname(hostname)
+        logging.info(f"Resolved {hostname} to {ip}")
+        return ip
+    except socket.error:
+        logging.warning(f"Could not resolve {hostname}, using fallback: {default_ip}")
+        return default_ip
+
+RASPBERRY_PI_IP = resolve_hostname_or_default("raspberrypi6", os.getenv("RASPBERRY_PI_IP", "127.0.0.1"))
+logging.info(f"Initial Raspberry Pi IP: {RASPBERRY_PI_IP}")
 
 def set_raspberry_pi_ip(ip: str):
     global RASPBERRY_PI_IP
