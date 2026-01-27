@@ -1,0 +1,16 @@
+[Unit]
+Description=Icaro Buzzer Server
+After=network.target
+
+[Service]
+# Change this user to the user available on your Raspberry Pi (e.g., pi)
+User=pi
+# Adjust the path to where you cloned the repo or copied the server folder
+WorkingDirectory=/home/pi/icaro/server
+# Adjust the path to your python executable (e.g., inside a venv)
+ExecStart=/usr/bin/python3 -m uvicorn main:app --host 0.0.0.0 --port 8000
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
