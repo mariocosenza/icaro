@@ -56,7 +56,7 @@ async def trigger_buzzer() -> bool:
         url = f"{RASPBERRY_PI_HOST}/alert"
     else:
         # Treat as hostname/IP, assume HTTP and port 8080
-        url = f"http://{RASPBERRY_PI_HOST}:8080/alert"
+        url = f"http://{RASPBERRY_PI_HOST}/alert"
         
     try:
         async with httpx.AsyncClient(timeout=2.0) as client:
@@ -73,11 +73,9 @@ async def stop_buzzer():
     Sends a request to the Raspberry Pi server to stop the buzzer.
     """
     if RASPBERRY_PI_HOST.startswith("http://") or RASPBERRY_PI_HOST.startswith("https://"):
-        # Treat as full base URL
         url = f"{RASPBERRY_PI_HOST}/stop"
     else:
-        # Treat as hostname/IP, assume HTTP and port 8080
-        url = f"http://{RASPBERRY_PI_HOST}:8080/stop"
+        url = f"http://{RASPBERRY_PI_HOST}/stop"
 
     try:
         async with httpx.AsyncClient(timeout=2.0) as client:
