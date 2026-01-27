@@ -65,9 +65,9 @@ async def play_buzzer_pattern(duration: float):
         end_time = asyncio.get_event_loop().time() + duration
         while asyncio.get_event_loop().time() < end_time:
             buzzer.on()
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(15)
             buzzer.off()
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(15)
     else:
         logger.info(f"[MOCK] Buzzer ON-OFF pattern for {duration} seconds")
         await asyncio.sleep(duration)
