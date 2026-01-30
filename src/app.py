@@ -2,6 +2,7 @@ import asyncio
 import logging
 import uuid
 from contextlib import asynccontextmanager
+from urllib.parse import unquote
 from pathlib import Path
 from typing import Optional
 
@@ -279,7 +280,9 @@ async def update_raspberry_pi_address_endpoint(address: str):
     if not address:
          raise HTTPException(status_code=400, detail="Address is required")
     
-    set_raspberry_pi_address(address)
+    decoded_address = unquote(address)
+    set_raspberry_pi_address(decoded_address)
+    log.info(f"Raspberry Pi address updated to: {decoded_address} (original: {address})")
     
     return {
         "ok": True,
