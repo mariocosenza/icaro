@@ -180,7 +180,7 @@ def _handle_horizontal_event(out: dict, timestamp_ms: int, no_movement: bool, ab
         )
         return True
 
-    return False
+    return True
 
 
 def _handle_fall_event(out: dict, timestamp_ms: int, abnormal_hr: bool) -> bool:
@@ -257,7 +257,8 @@ def _make_detector_instance() -> LiveManDownDetector:
             consecutive_fall=5,
             consecutive_horizontal=3,
             reset_on_invalid=False,
-            min_window_quality="high",
+            min_window_quality="medium",
+            horizontal_always_active=True,
         ),
     )
 

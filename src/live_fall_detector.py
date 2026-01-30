@@ -31,6 +31,7 @@ class DetectorConfig:
     consecutive_horizontal: int = 4
     post_fall_duration: int = 60
     reset_on_invalid: bool = False
+    horizontal_always_active: bool = True
 
 
 class LiveManDownDetector:
@@ -72,6 +73,7 @@ class LiveManDownDetector:
         self._post_fall_timer = 0
 
         self.reset_on_invalid = bool(cfg.reset_on_invalid)
+        self.horizontal_always_active = bool(cfg.horizontal_always_active)
 
         self._fall_feat_buf = deque(maxlen=self.window)
         self._fall_q_buf = deque(maxlen=self.window)
@@ -171,7 +173,7 @@ class LiveManDownDetector:
         return self._fall_hits >= self.consecutive_fall, fall_prob
 
     def _evaluate_horizontal(self) -> Tuple[bool, Optional[float]]:
-        if self._post_fall_timer <= 0:
+        if self._post_fall_timer <= 0 and not self.horizontal_always_active:
             self._horiz_hits = 0
             return False, None
 
