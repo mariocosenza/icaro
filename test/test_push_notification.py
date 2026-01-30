@@ -50,10 +50,10 @@ class TestPushNotification(unittest.TestCase):
 
         # Check calls to Message
         self.assertEqual(len(messages), 2)
-        # First call has notification
-        self.assertEqual(messages[0]._kwargs['notification'].title, "test title")
-        # Second call has data
-        self.assertEqual(messages[1]._kwargs['data']['action'], "FALL_DETECTED")
+        # First call has data
+        self.assertEqual(messages[0]._kwargs['data']['action'], "FALL_DETECTED")
+        # Second call has notification
+        self.assertEqual(messages[1]._kwargs['notification'].title, "test title")
 
     @patch('src.push_notification.messaging')
     def test_send_push_notification_heartbeat(self, mock_msg):
