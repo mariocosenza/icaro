@@ -6,7 +6,11 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 
-HAS_MEDIAPIPE = importlib.util.find_spec("mediapipe") is not None
+sys.modules["mediapipe"] = MagicMock()
+sys.modules["mediapipe.tasks"] = MagicMock()
+sys.modules["mediapipe.tasks.python"] = MagicMock()
+sys.modules["mediapipe.tasks.python.vision"] = MagicMock()
+
 HAS_CV2 = importlib.util.find_spec("cv2") is not None
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -26,9 +30,17 @@ from src.pose_landmark import (
     _resolve_width, _resize_frame, _mp_image_from_bgr,
     _timestamp_live, _timestamp_video, PoseConfig, _make_detector
 )
+import src.pose_landmark
+import importlib
+importlib.reload(src.pose_landmark)
+# Re-import after reload to get the patched version functions
+from src.pose_landmark import (
+    _resolve_width, _resize_frame, _mp_image_from_bgr,
+    _timestamp_live, _timestamp_video, PoseConfig, _make_detector
+)
 
 
-@unittest.skipUnless(HAS_MEDIAPIPE and HAS_CV2, "mediapipe/cv2 not installed")
+@unittest.skipUnless(HAS_CV2, "cv2 not installed")
 class TestPoseLandmark(unittest.TestCase):
 
     def test_resolve_width(self):

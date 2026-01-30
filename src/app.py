@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import uuid
+import re
 from contextlib import asynccontextmanager
 from urllib.parse import unquote
 from pathlib import Path
@@ -133,8 +134,18 @@ def post_heartbeat(heartbeat: int):
     return {"ok": True}
 
 
-@app.post("/api/v1/monitor/{x}-{y}-{z}")
-def post_movement(x: float, y: float, z: float):
+@app.post("/api/v1/monitor/{data:path}")
+def post_movement(data: str):
+    # Regex to capture three floating point numbers (including negatives) separated by hyphens
+    # Expected format: x-y-z where x, y, z can be negative e.g. 4.587--0.807-8.367
+    match = re.match(r"^([+-]?\d*\.?\d+)-([+-]?\d*\.?\d+)-([+-]?\d*\.?\d+)$", data)
+    if not match:
+         raise HTTPException(status_code=422, detail="Invalid format. Expected x-y-z")
+
+    x = float(match.group(1))
+    y = float(match.group(2))
+    z = float(match.group(3))
+
     LatestMovement.X = x
     LatestMovement.Y = y
     LatestMovement.Z = z

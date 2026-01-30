@@ -6,12 +6,18 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 
-HAS_MEDIAPIPE = importlib.util.find_spec("mediapipe") is not None
+sys.modules["mediapipe"] = MagicMock()
+sys.modules["mediapipe.tasks"] = MagicMock()
+sys.modules["mediapipe.tasks.python"] = MagicMock()
+sys.modules["mediapipe.tasks.python.vision"] = MagicMock()
+sys.modules["mediapipe.tasks.python.core"] = MagicMock()
+sys.modules["mediapipe.tasks.python.core.base_options"] = MagicMock()
+sys.modules["mediapipe.tasks.python.vision.gesture_recognizer"] = MagicMock()
+sys.modules["mediapipe.tasks.python.vision.gesture_recognizer_result"] = MagicMock()
+sys.modules["mediapipe.tasks.python.vision.pose_landmarker"] = MagicMock()
+
 HAS_CV2 = importlib.util.find_spec("cv2") is not None
 HAS_PANDAS = importlib.util.find_spec("pandas") is not None
-
-if HAS_MEDIAPIPE:
-    pass
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT not in sys.path:
@@ -24,7 +30,7 @@ from src.calibration import _timestamp_ms, print_result, pose_result_callback, c
 from src.util_landmarks import BodyLandmark
 
 
-@unittest.skipUnless(HAS_MEDIAPIPE and HAS_CV2 and HAS_PANDAS, "mediapipe/cv2/pandas not installed")
+@unittest.skipUnless(HAS_CV2 and HAS_PANDAS, "cv2/pandas not installed")
 class TestCalibration(unittest.TestCase):
 
     def test_timestamp_ms_webcam(self):

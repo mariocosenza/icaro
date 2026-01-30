@@ -1,4 +1,5 @@
 import importlib.util
+HAS_CV2 = importlib.util.find_spec("cv2") is not None
 import os
 import sys
 import unittest
@@ -6,11 +7,13 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 
-HAS_MEDIAPIPE = importlib.util.find_spec("mediapipe") is not None
-HAS_CV2 = importlib.util.find_spec("cv2") is not None
+sys.modules["mediapipe"] = MagicMock()
+sys.modules["mediapipe.tasks"] = MagicMock()
+sys.modules["mediapipe.tasks.python"] = MagicMock()
+sys.modules["mediapipe.tasks.python.vision"] = MagicMock()
 
-if HAS_MEDIAPIPE:
-    import mediapipe as mp
+# Since we mocked it, we can import it successfully
+import mediapipe as mp
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT not in sys.path:
@@ -22,7 +25,7 @@ if SRC not in sys.path:
 from src.drawing import _fit_to_screen, draw_pose_points, show_single_image, show_video_loop
 
 
-@unittest.skipUnless(HAS_MEDIAPIPE and HAS_CV2, "mediapipe/cv2 not installed")
+@unittest.skipUnless(HAS_CV2, "cv2 not installed")
 class TestDrawing(unittest.TestCase):
 
     def test_fit_to_screen_no_resize(self):
@@ -45,7 +48,7 @@ class TestDrawing(unittest.TestCase):
         mock_wait.return_value = ord('a')
 
         img_data = np.zeros((100, 100, 3), dtype=np.uint8)
-        mp_image = MagicMock(spec=mp.Image)
+        mp_image = MagicMock()
         mp_image.numpy_view.return_value = img_data
 
         # Mock detection result with one pose and one landmark
