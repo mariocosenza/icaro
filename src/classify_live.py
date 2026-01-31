@@ -49,7 +49,7 @@ def reset_detector_state() -> None:
     global _detector_enabled, _detector_disabled_until_ms, _detector
     _detector_enabled = True
     _detector_disabled_until_ms = 0
-    LatestHeartbeat.NOTIED_FALL = False
+    LatestHeartbeat.NOTIFIED_FALL = False
     
     if _detector is not None:
         _detector.tracks.clear()
@@ -127,7 +127,7 @@ def _notify_heartbeat() -> None:
 
 
 def _horizontal_trigger(out: dict) -> bool:
-    return bool(out.get("horizontal_event")) and out.get("horizontal_prob", 0.0) > 0.97
+    return bool(out.get("horizontal_event")) and out.get("horizontal_prob", 0.0) > 0.99
 
 
 def _fall_trigger(out: dict) -> bool:
@@ -135,8 +135,8 @@ def _fall_trigger(out: dict) -> bool:
 
 
 def _maybe_notify_heartbeat(no_movement: bool, abnormal_hr: bool) -> None:
-    if (not LatestHeartbeat.NOTIED_FALL) and abnormal_hr and no_movement:
-        LatestHeartbeat.NOTIED_FALL = True
+    if (not LatestHeartbeat.NOTIFIED_FALL) and abnormal_hr and no_movement:
+        LatestHeartbeat.NOTIFIED_FALL = True
         _notify_heartbeat()
 
 
@@ -153,7 +153,7 @@ def _handle_disabled_state(
 
     if _can_reenable_detector(result, timestamp_ms):
         _detector_enabled = True
-        LatestHeartbeat.NOTIED_FALL = False
+        LatestHeartbeat.NOTIFIED_FALL = False
         return False
 
     _detector.update(frame_landmarks)
@@ -164,15 +164,12 @@ def _handle_horizontal_event(out: dict, timestamp_ms: int, no_movement: bool, ab
     if not _horizontal_trigger(out):
         return False
 
-    if LatestHeartbeat.NOTIED_FALL:
+    if LatestHeartbeat.NOTIFIED_FALL:
         _notify_monitoring()
-        LatestHeartbeat.NOTIED_FALL = False
+        LatestHeartbeat.NOTIFIED_FALL = False
 
-    print(out)
-    print(abnormal_hr and no_movement)
 
     if abnormal_hr and no_movement:
-        _notify_monitoring()
         _notify_push("Man Down Detected", "A man is down please check your app!")
         _notify_mongo(
             "Man Down Detected",
@@ -203,7 +200,7 @@ def _handle_fall_event(out: dict, timestamp_ms: int, abnormal_hr: bool) -> bool:
     )
 
     if abnormal_hr:
-        LatestHeartbeat.NOTIED_FALL = True
+        LatestHeartbeat.NOTIFIED_FALL = True
         _notify_heartbeat()
 
     return True
@@ -262,7 +259,7 @@ def _make_detector_instance() -> LiveManDownDetector:
             consecutive_fall=5,
             consecutive_horizontal=5,
             reset_on_invalid=False,
-            min_window_quality="medium",
+            min_window_quality="high",
             horizontal_always_active=True,
         ),
     )
