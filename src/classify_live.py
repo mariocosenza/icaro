@@ -127,11 +127,11 @@ def _notify_heartbeat() -> None:
 
 
 def _horizontal_trigger(out: dict) -> bool:
-    return bool(out.get("horizontal_event")) and out.get("horizontal_prob", 0.0) > 0.70
+    return bool(out.get("horizontal_event")) and out.get("horizontal_prob", 0.0) > 0.60
 
 
 def _fall_trigger(out: dict) -> bool:
-    return bool(out.get("fall_event")) and out.get("fall_prob", 0.0) > 0.98
+    return bool(out.get("fall_event")) and out.get("fall_prob", 0.0) > 0.96
 
 
 def _maybe_notify_heartbeat(no_movement: bool, abnormal_hr: bool) -> None:
@@ -164,10 +164,12 @@ def _handle_horizontal_event(out: dict, timestamp_ms: int, no_movement: bool, ab
     if not _horizontal_trigger(out):
         return False
 
-    if not LatestHeartbeat.NOTIED_FALL:
+    if LatestHeartbeat.NOTIED_FALL:
         _notify_monitoring()
+        LatestHeartbeat.NOTIED_FALL = False
 
     if abnormal_hr and no_movement:
+        _notify_monitoring()
         _notify_push("Man Down Detected", "A man is down please check your app!")
         _notify_mongo(
             "Man Down Detected",
@@ -180,7 +182,7 @@ def _handle_horizontal_event(out: dict, timestamp_ms: int, no_movement: bool, ab
         )
         return True
 
-    return True
+    return False
 
 
 def _handle_fall_event(out: dict, timestamp_ms: int, abnormal_hr: bool) -> bool:
@@ -257,7 +259,7 @@ def _make_detector_instance() -> LiveManDownDetector:
             consecutive_fall=5,
             consecutive_horizontal=3,
             reset_on_invalid=False,
-            min_window_quality="medium",
+            min_window_quality="high",
             horizontal_always_active=True,
         ),
     )
