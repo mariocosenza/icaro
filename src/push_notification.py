@@ -35,7 +35,7 @@ firebase_admin.initialize_app(cred)
 
 
 class LatestHeartbeat:
-    BPM: float = 80
+    BPM: float = 0
     NOTIED_FALL: bool = False
 
 

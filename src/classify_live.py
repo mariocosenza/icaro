@@ -127,7 +127,7 @@ def _notify_heartbeat() -> None:
 
 
 def _horizontal_trigger(out: dict) -> bool:
-    return bool(out.get("horizontal_event")) and out.get("horizontal_prob", 0.0) > 0.60
+    return bool(out.get("horizontal_event")) and out.get("horizontal_prob", 0.0) > 0.97
 
 
 def _fall_trigger(out: dict) -> bool:
@@ -167,6 +167,9 @@ def _handle_horizontal_event(out: dict, timestamp_ms: int, no_movement: bool, ab
     if LatestHeartbeat.NOTIED_FALL:
         _notify_monitoring()
         LatestHeartbeat.NOTIED_FALL = False
+
+    print(out)
+    print(abnormal_hr and no_movement)
 
     if abnormal_hr and no_movement:
         _notify_monitoring()
@@ -255,11 +258,11 @@ def _make_detector_instance() -> LiveManDownDetector:
             horizontal_min_quality=bundle["cfg"]["horizontal_min_quality"],
             horizontal_min_good_keypoints=bundle["cfg"]["horizontal_min_good_keypoints"],
             fall_threshold=0.70,
-            horizontal_threshold=0.60,
+            horizontal_threshold=0.80,
             consecutive_fall=5,
-            consecutive_horizontal=3,
+            consecutive_horizontal=5,
             reset_on_invalid=False,
-            min_window_quality="high",
+            min_window_quality="medium",
             horizontal_always_active=True,
         ),
     )
